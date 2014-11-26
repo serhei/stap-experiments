@@ -1,5 +1,6 @@
 // stapdyn mutatee functions
 // Copyright (C) 2012-2014 Red Hat Inc.
+// Copyright (C) 2013-2014 Serhei Makarov
 //
 // This file is part of systemtap, and is free software.  You can
 // redistribute it and/or modify it under the terms of the GNU General
@@ -129,25 +130,118 @@ class mutatee_freezer {
 
 
 mutatee::mutatee(BPatch_process* process):
-  pid(process? process->getPid() : 0),
-  process(process), stap_dso(NULL),
-  utrace_enter_function(NULL)
+  pid(process? process->getPid() : 0), process(process)
 {
   get_dwarf_registers(process, registers);
 }
 
 mutatee::~mutatee()
 {
-  remove_instrumentation();
-  unload_stap_dso();
+  // TODOXXX Mark each of the script_targets as inert, then clean them up.
+  targets.clear();
+
   if (process)
     process->detach(true);
 }
 
 
+boost::shared_ptr<script_target>
+mutatee::create_target (bool main_target_p)
+{
+  boost::shared_ptr<script_target> t
+    (new script_target(this, process, main_target_p));
+  targets.push_back(t);
+  return t;
+}
+
+
+// Send a signal to the process.
+int
+mutatee::kill(int signal)
+{
+  return pid ? ::kill(pid, signal) : -2;
+}
+
+
+void
+mutatee::continue_execution()
+{
+  if (is_stopped())
+    {
+      staplog(2) << "continuing execution of pid " << pid << endl;
+      process->continueExecution();
+    }
+}
+
+
+bool
+mutatee::stop_execution()
+{
+  if (process->isStopped())
+    {
+      // Process is already stopped, no need to do anything else.
+      return true;
+    }
+
+  staplog(2) << "stopping execution of pid " << pid << endl;
+  if (! process->stopExecution())
+    {
+      staplog(1) << "stopExecution on pid " << pid << " failed!" << endl;
+      return false;
+    }
+  if (! process->isStopped() || process->isTerminated())
+    {
+      staplog(1) << "couldn't stop pid " << pid << "!" << endl;
+      return false;
+    }
+  return true;
+}
+
+
+void
+mutatee::thread_callback(BPatch_thread *thread, bool create_p)
+{
+  // If 'thread' is the main process, just return. We can't stop the
+  // process before it terminates.
+  if (thread->getLWP() == process->getPid())
+    return;
+
+  // thread->oneTimeCode() requires that the process (not just the
+  // thread) be stopped. So, stop the process if needed.
+  mutatee_freezer mf(*this);
+  if (!is_stopped())
+    return;
+
+  for (size_t i = 0; i < targets.size(); ++i)
+    targets[i]->thread_callback(thread, create_p);
+}
+
+
+// ------------------------------------------------------------------------
+
+
+script_target::script_target (mutatee *owner, BPatch_process* process,
+                              bool main_target_p):
+  owner(owner), process(process), stap_dso(NULL),
+  utrace_enter_function(NULL), p_main_target(main_target_p)
+{
+  if (p_main_target)
+    owner->add_main_target();
+}
+
+script_target::~script_target ()
+{
+  if (p_main_target)
+    owner->remove_main_target();
+
+  remove_instrumentation();
+  unload_stap_dso();
+}
+
+
 // Inject the stap module into the target process
 bool
-mutatee::load_stap_dso(const string& filename)
+script_target::load_stap_dso(const string& filename)
 {
   stap_dso = process->loadLibrary(filename.c_str());
   if (!stap_dso)
@@ -161,7 +255,7 @@ mutatee::load_stap_dso(const string& filename)
 
 // Unload the stap module from the target process
 void
-mutatee::unload_stap_dso()
+script_target::unload_stap_dso()
 {
   if (!process || !stap_dso)
     return;
@@ -171,9 +265,8 @@ mutatee::unload_stap_dso()
 }
 
 
-
 void
-mutatee::update_semaphores(unsigned short delta, size_t start)
+script_target::update_semaphores(unsigned short delta, size_t start)
 {
   if (!process || process->isTerminated())
     return;
@@ -193,86 +286,10 @@ mutatee::update_semaphores(unsigned short delta, size_t start)
 }
 
 
-void
-mutatee::call_utrace_dynprobes(const vector<dynprobe_location>& probes,
-			       BPatch_thread* thread)
-{
-  if (!stap_dso || probes.empty())
-    return;
-
-  if (utrace_enter_function == NULL)
-    {
-      vector<BPatch_function *> functions;
-      stap_dso->findFunction("enter_dyninst_utrace_probe",
-			     functions);
-      if (!functions.empty())
-	utrace_enter_function = functions[0];
-      else
-	{
-	  staplog(1) << "no utrace enter function in pid " << pid << "!" << endl;
-	  return;
-	}
-    }
-
-  for (size_t i = 0; i < probes.size(); ++i)
-    {
-      const dynprobe_location& probe = probes[i];
-      vector<BPatch_snippet *> args;
-      args.push_back(new BPatch_constExpr((int64_t)probe.index));
-      args.push_back(new BPatch_constExpr((void*)NULL)); // pt_regs
-      BPatch_funcCallExpr call(*utrace_enter_function, args);
-      staplog(3) << "calling utrace function in pid " << pid
-		 << " for probe index " << probe.index << endl;
-      if (thread)
-	thread->oneTimeCode(call);
-      else
-	process->oneTimeCode(call);
-    }
-}
-
-
-// Remember utrace probes. They get handled when the associated
-// callback hits.
-void
-mutatee::instrument_utrace_dynprobe(const dynprobe_location& probe)
-{
-  // Just remember this probe. It will get called from a callback function.
-  attached_probes.push_back(probe);
-}
-
-
-// Handle "global" targets. They aren't really global, but non-path
-// based probes, like:
-//	probe process.begin { ... }
-//	probe process(PID).begin { ... }
-void
-mutatee::instrument_global_dynprobe_target(const dynprobe_target& target)
-{
-  staplog(1) << "found global target in pid " << pid << ", inserting "
-             << target.probes.size() << " probes" << endl;
-
-  for (size_t j = 0; j < target.probes.size(); ++j)
-    {
-      const dynprobe_location& probe = target.probes[j];
-
-      // We already know this isn't a path-based probe. We've got 2
-      // other qualifications here:
-      // (1) Make sure this is a utrace probe by checking the flags.
-      // (2) If PID was specified, does the pid match?
-      if (((probe.flags & (STAPDYN_PROBE_FLAG_PROC_BEGIN
-			   | STAPDYN_PROBE_FLAG_PROC_END
-			   | STAPDYN_PROBE_FLAG_THREAD_BEGIN
-			   | STAPDYN_PROBE_FLAG_THREAD_END)) != 0)
-	  && (probe.offset == 0 || (int)probe.offset == process->getPid()))
-	instrument_utrace_dynprobe(probe);
-    }
-}
-
-
 // Given a target and the matching object, instrument all of the probes
 // with calls to the stap_dso's entry function.
 void
-mutatee::instrument_dynprobe_target(BPatch_object* object,
+script_target::instrument_dynprobe_target(BPatch_object* object,
                                     const dynprobe_target& target)
 {
   if (!process || !stap_dso || !object)
@@ -282,7 +299,7 @@ mutatee::instrument_dynprobe_target(BPatch_object* object,
   BPatch_function* enter_function = NULL;
   bool use_pt_regs = false;
 
-  staplog(1) << "found target \"" << target.path << "\" in pid " << pid
+  staplog(1) << "found target \"" << target.path << "\" in pid " << process_id()
 	     << ", inserting " << target.probes.size() << " probes" << endl;
 
   process->beginInsertionSet();
@@ -303,7 +320,7 @@ mutatee::instrument_dynprobe_target(BPatch_object* object,
         {
 	  // XXX Until we know how to build pt_regs from here, we'll
 	  // try the entry function for individual registers first.
-	  if (!registers.empty())
+	  if (!owner->get_registers()->empty())
 	    stap_dso->findFunction("enter_dyninst_uprobe_regs", functions,
 				   false);
 	  if (!functions.empty())
@@ -396,8 +413,9 @@ mutatee::instrument_dynprobe_target(BPatch_object* object,
         args.push_back(new BPatch_constExpr((void*)NULL)); // pt_regs
       else
         {
-          args.push_back(new BPatch_constExpr((unsigned long)registers.size()));
-          args.insert(args.end(), registers.begin(), registers.end());
+          std::vector<BPatch_snippet*> *registers = owner->get_registers();
+          args.push_back(new BPatch_constExpr((unsigned long)registers->size()));
+          args.insert(args.end(), registers->begin(), registers->end());
         }
       BPatch_funcCallExpr call(*enter_function, args);
 
@@ -426,30 +444,10 @@ mutatee::instrument_dynprobe_target(BPatch_object* object,
   process->finalizeInsertionSet(false);
 }
 
-
-// Look for "global" (non-path based) probes and handle them.
-void
-mutatee::instrument_global_dynprobes(const vector<dynprobe_target>& targets)
-{
-  if (!process || !stap_dso || targets.empty())
-    return;
-
-  // Look for global (non path-based probes), and remember them.
-  for (size_t i = 0; i < targets.size(); ++i)
-    {
-      const dynprobe_target& target = targets[i];
-
-      // Do the real work...
-      if (target.path.empty())
-	instrument_global_dynprobe_target(target);
-    }
-}
-
-
 // Look for all matches between this object and the targets
 // we want to probe, then do the instrumentation.
 void
-mutatee::instrument_object_dynprobes(BPatch_object* object,
+script_target::instrument_object_dynprobes(BPatch_object* object,
                                      const vector<dynprobe_target>& targets)
 {
   if (!process || !stap_dso || !object || targets.empty())
@@ -458,7 +456,7 @@ mutatee::instrument_object_dynprobes(BPatch_object* object,
   // We want to map objects by their full path, but the pathName from
   // Dyninst might be relative, so fill it out.
   string path = resolve_path(object->pathName());
-  staplog(2) << "found object \"" << path << "\" in pid " << pid << endl;
+  staplog(2) << "found object \"" << path << "\" in pid " << process_id() << endl;
 
   size_t semaphore_start = semaphores.size();
 
@@ -477,8 +475,22 @@ mutatee::instrument_object_dynprobes(BPatch_object* object,
 }
 
 
+vector<dynprobe_location>
+script_target::find_attached_probes(uint64_t flag)
+{
+  vector<dynprobe_location> probes;
+  for (size_t i = 0; i < attached_probes.size(); ++i)
+    {
+      const dynprobe_location& probe = attached_probes[i];
+      if (probe.flags & flag)
+       probes.push_back(probe);
+    }
+  return probes;
+}
+
+
 void
-mutatee::begin_callback(BPatch_thread *thread)
+script_target::begin_callback(BPatch_thread *thread)
 {
   const vector<dynprobe_location>& proc_begin_probes =
     find_attached_probes(STAPDYN_PROBE_FLAG_PROC_BEGIN);
@@ -488,12 +500,12 @@ mutatee::begin_callback(BPatch_thread *thread)
     return;
 
   // process->oneTimeCode() requires that the process be stopped
-  mutatee_freezer mf(*this);
-  if (!is_stopped())
+  mutatee_freezer mf(*owner);
+  if (!owner->is_stopped())
     return;
 
   staplog(2) << "firing " << proc_begin_probes.size()
-	     << " process.begin probes in pid " << pid << endl;
+	     << " process.begin probes in pid " << process_id() << endl;
   call_utrace_dynprobes(proc_begin_probes, thread);
 }
 
@@ -503,7 +515,7 @@ mutatee::begin_callback(BPatch_thread *thread)
 // So while the code here works for post-exec "end", for now the
 // mutator::exit_callback() will run its probes locally in stapdyn.
 void
-mutatee::exit_callback(BPatch_thread *thread, bool exec_p)
+script_target::exit_callback(BPatch_thread *thread, bool exec_p)
 {
   const vector<dynprobe_location>& proc_end_probes =
     exec_p ? exec_proc_end_probes
@@ -513,20 +525,21 @@ mutatee::exit_callback(BPatch_thread *thread, bool exec_p)
   if (proc_end_probes.empty())
     return;
 
+  // TODOXXX Is this really the right thing to do?
+  //
   // thread->oneTimeCode() requires that the process (not just the
   // thread) be stopped. So, stop the process if needed.
-  mutatee_freezer mf(*this);
-  if (!is_stopped())
+  mutatee_freezer mf(*owner);
+  if (!owner->is_stopped())
     return;
 
   staplog(2) << "firing " << proc_end_probes.size()
-	     << " process.end probes in pid " << pid << endl;
+	     << " process.end probes in pid " << process_id() << endl;
   call_utrace_dynprobes(proc_end_probes, thread);
 }
 
-
 void
-mutatee::thread_callback(BPatch_thread *thread, bool create_p)
+script_target::thread_callback(BPatch_thread *thread, bool create_p)
 {
   const vector<dynprobe_location>& probes =
     find_attached_probes(create_p
@@ -543,35 +556,115 @@ mutatee::thread_callback(BPatch_thread *thread, bool create_p)
     return;
 
   // thread->oneTimeCode() requires that the process (not just the
-  // thread) be stopped. So, stop the process if needed.
-  mutatee_freezer mf(*this);
-  if (!is_stopped())
+  // thread) be stopped. This should be ensured by mutatee::thread_callback().
+  if (!owner->is_stopped())
     return;
 
   staplog(2) << "firing " << probes.size()
 	     << " process.thread." << (create_p ? "begin" : "end")
-	     << " probes in pid " << pid << endl;
+	     << " probes in pid " << process_id() << endl;
   call_utrace_dynprobes(probes, thread);
 }
 
 
-vector<dynprobe_location>
-mutatee::find_attached_probes(uint64_t flag)
+void
+script_target::call_utrace_dynprobes(const vector<dynprobe_location>& probes,
+                                     BPatch_thread* thread)
 {
-  vector<dynprobe_location> probes;
-  for (size_t i = 0; i < attached_probes.size(); ++i)
+  if (!stap_dso || probes.empty())
+    return;
+
+  if (utrace_enter_function == NULL)
     {
-      const dynprobe_location& probe = attached_probes[i];
-      if (probe.flags & flag)
-       probes.push_back(probe);
+      vector<BPatch_function *> functions;
+      stap_dso->findFunction("enter_dyninst_utrace_probe",
+			     functions);
+      if (!functions.empty())
+	utrace_enter_function = functions[0];
+      else
+	{
+	  staplog(1) << "no utrace enter function in pid " << process_id()
+                     << "!" << endl;
+	  return;
+	}
     }
-  return probes;
+
+  for (size_t i = 0; i < probes.size(); ++i)
+    {
+      const dynprobe_location& probe = probes[i];
+      vector<BPatch_snippet *> args;
+      args.push_back(new BPatch_constExpr((int64_t)probe.index));
+      args.push_back(new BPatch_constExpr((void*)NULL)); // pt_regs
+      BPatch_funcCallExpr call(*utrace_enter_function, args);
+      staplog(3) << "calling utrace function in pid " << process_id()
+		 << " for probe index " << probe.index << endl;
+      if (thread)
+	thread->oneTimeCode(call);
+      else
+	process->oneTimeCode(call);
+    }
+}
+
+
+// Remember utrace probes. They get handled when the associated
+// callback hits.
+void
+script_target::instrument_utrace_dynprobe(const dynprobe_location& probe)
+{
+  // Just remember this probe. It will get called from a callback function.
+  attached_probes.push_back(probe);
+}
+
+
+// Handle "global" targets. They aren't really global, but non-path
+// based probes, like:
+//	probe process.begin { ... }
+//	probe process(PID).begin { ... }
+void
+script_target::instrument_global_dynprobe_target(const dynprobe_target& target)
+{
+  staplog(1) << "found global target in pid " << process_id() << ", inserting "
+             << target.probes.size() << " probes" << endl;
+
+  for (size_t j = 0; j < target.probes.size(); ++j)
+    {
+      const dynprobe_location& probe = target.probes[j];
+
+      // We already know this isn't a path-based probe. We've got 2
+      // other qualifications here:
+      // (1) Make sure this is a utrace probe by checking the flags.
+      // (2) If PID was specified, does the pid match?
+      if (((probe.flags & (STAPDYN_PROBE_FLAG_PROC_BEGIN
+			   | STAPDYN_PROBE_FLAG_PROC_END
+			   | STAPDYN_PROBE_FLAG_THREAD_BEGIN
+			   | STAPDYN_PROBE_FLAG_THREAD_END)) != 0)
+	  && (probe.offset == 0 || (int)probe.offset == process->getPid()))
+	instrument_utrace_dynprobe(probe);
+    }
+}
+
+// Look for "global" (non-path based) probes and handle them.
+void
+script_target::instrument_global_dynprobes(const vector<dynprobe_target>& targets)
+{
+  if (!process || !stap_dso || targets.empty())
+    return;
+
+  // Look for global (non path-based probes), and remember them.
+  for (size_t i = 0; i < targets.size(); ++i)
+    {
+      const dynprobe_target& target = targets[i];
+
+      // Do the real work...
+      if (target.path.empty())
+	instrument_global_dynprobe_target(target);
+    }
 }
 
 
 // Look for probe matches in all objects.
 void
-mutatee::instrument_dynprobes(const vector<dynprobe_target>& targets)
+script_target::instrument_dynprobes(const vector<dynprobe_target>& targets)
 {
   if (!process || !stap_dso || targets.empty())
     return;
@@ -593,13 +686,13 @@ mutatee::instrument_dynprobes(const vector<dynprobe_target>& targets)
 
 // Copy data for forked instrumentation
 void
-mutatee::copy_forked_instrumentation(mutatee& other)
+script_target::copy_forked_instrumentation(script_target& other)
 {
   if (!process)
     return;
 
   // Freeze both processes, so we have a stable base.
-  mutatee_freezer mf_parent(other), mf(*this);
+  mutatee_freezer mf_parent(*other.owner), mf(*owner);
 
   // Find the same stap module in the fork
   if (other.stap_dso)
@@ -651,7 +744,7 @@ mutatee::copy_forked_instrumentation(mutatee& other)
 
 // Reset instrumentation after an exec
 void
-mutatee::exec_reset_instrumentation()
+script_target::exec_reset_instrumentation()
 {
   // Reset members that are now out of date
   stap_dso = NULL;
@@ -669,7 +762,7 @@ mutatee::exec_reset_instrumentation()
 
 // Remove all BPatch snippets we've instrumented in the target
 void
-mutatee::remove_instrumentation()
+script_target::remove_instrumentation()
 {
   if (!process || snippets.empty())
     return;
@@ -690,7 +783,7 @@ mutatee::remove_instrumentation()
 
 // Look up a function by name in the target and invoke it without parameters.
 void
-mutatee::call_function(const string& name)
+script_target::call_function(const string& name)
 {
   vector<BPatch_snippet *> args;
   call_function(name, args);
@@ -698,15 +791,15 @@ mutatee::call_function(const string& name)
 
 // Look up a function by name in the target and invoke it with parameters.
 void
-mutatee::call_function(const string& name,
+script_target::call_function(const string& name,
                        const vector<BPatch_snippet *>& args)
 {
   if (!stap_dso)
     return;
 
   // process->oneTimeCode() requires that the process be stopped
-  mutatee_freezer mf(*this);
-  if (!is_stopped())
+  mutatee_freezer mf(*owner);
+  if (!owner->is_stopped())
     return;
 
   vector<BPatch_function *> functions;
@@ -717,51 +810,10 @@ mutatee::call_function(const string& name,
   for (size_t i = 0; i < functions.size(); ++i)
     {
       BPatch_funcCallExpr call(*functions[i], args);
-      staplog(3) << "calling function '" << name << "' in pid " << pid << endl;
+      staplog(3) << "calling function '" << name << "' in pid "
+                 << process_id() << endl;
       process->oneTimeCode(call);
     }
 }
 
-
-// Send a signal to the process.
-int
-mutatee::kill(int signal)
-{
-  return pid ? ::kill(pid, signal) : -2;
-}
-
-
-void
-mutatee::continue_execution()
-{
-  if (is_stopped())
-    {
-      staplog(2) << "continuing execution of pid " << pid << endl;
-      process->continueExecution();
-    }
-}
-
-
-bool
-mutatee::stop_execution()
-{
-  if (process->isStopped())
-    {
-      // Process is already stopped, no need to do anything else.
-      return true;
-    }
-
-  staplog(2) << "stopping execution of pid " << pid << endl;
-  if (! process->stopExecution())
-    {
-      staplog(1) << "stopExecution on pid " << pid << " failed!" << endl;
-      return false;
-    }
-  if (! process->isStopped() || process->isTerminated())
-    {
-      staplog(1) << "couldn't stop pid " << pid << "!" << endl;
-      return false;
-    }
-  return true;
-}
 /* vim: set sw=2 ts=8 cino=>4,n-2,{2,^-2,t0,(0,u0,w1,M1 : */
