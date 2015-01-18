@@ -36,6 +36,7 @@ static void _stp_shm_finalize(void);
 static void _stp_shm_destroy(void);
 
 
+#define DEBUG_SHM
 #ifdef DEBUG_SHM
 #define shm_dbug(fmt, args...) _stp_dbug(__FUNCTION__, __LINE__, fmt, ##args)
 #else
@@ -62,8 +63,9 @@ static const char *_stp_shm_init(void)
 		return NULL;
 
 	// Create a unique name for our shared memory.  It need not be anything
-        // secret because shm_open's flags will ensure security.
-        (void) snprintf(name, NAME_MAX, "/stapdyn.%d", getpid());
+	// secret because shm_open's flags will ensure security.
+	int module_index = rand(); // TODOXXX use a sequence number!!
+	(void) snprintf(name, NAME_MAX, "/stapdyn.%d.%d", getpid(), module_index);
 
 	// Create the actual share memory.  The O_EXCL saves us from the
 	// possible mktemp race.  Only USR file mode bits are added, because
