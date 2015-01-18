@@ -1,0 +1,2 @@
+global counter = 0
+probe timer.s(5) { printf ("ping5 %d\n", counter++) }

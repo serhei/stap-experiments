@@ -1,0 +1,1 @@
+probe begin { println("Hello, World!"); exit() }
