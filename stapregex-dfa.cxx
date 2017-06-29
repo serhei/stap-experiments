@@ -34,6 +34,9 @@
 // Uncomment to have the generated engine do a trace of visited states:
 //#define STAPREGEX_DEBUG_MATCH
 
+// Uncomment for a detailed walkthrough of the tagged-NFA conversion:
+//#define STAPREGEX_DEBUG_TNFA
+
 using namespace std;
 
 namespace stapregex {
@@ -148,8 +151,9 @@ arc_compare (const arc_priority& a, const arc_priority& b)
 
 /* Manage the linked list of states in a DFA: */
 
-state::state (state_kernel *kernel)
-  : label(~0), next(NULL), kernel(kernel), accepts(false), accept_outcome(0) {}
+state::state (dfa *owner, state_kernel *kernel)
+  : owner(owner), label(~0), next(NULL), kernel(kernel),
+    accepts(false), accept_outcome(0) {}
 
 state *
 dfa::add_state (state *s)
@@ -173,6 +177,7 @@ dfa::add_state (state *s)
 
 /* Operations to build a simple kernel prior to taking closure: */
 
+/* Create a new kernel_point in kernel with empty map items. */
 void
 add_kernel (state_kernel *kernel, ins *i)
 {
@@ -233,8 +238,6 @@ te_closure (state_kernel *start, int ntags, bool is_initial = false)
 
       ins *target = NULL; int tag = -1;
       ins *other_target = NULL; int other_tag = -1;
-
-      // TODOXXX line-by-line proceeds below
 
       bool do_split = false;
 
@@ -381,6 +384,24 @@ te_closure (state_kernel *start, int ntags, bool is_initial = false)
   return closure;
 }
 
+/* Helpers for constructing span table: */
+
+bool
+same_ins(list<kernel_point> &e1, list<kernel_point> &e2)
+{
+  set<ins *> s1;
+  for (list<kernel_point>::iterator it = e1.begin();
+       it != e1.end(); it++)
+    s1.insert(it->i);
+  set<ins *> s2;
+  for (list<kernel_point>::iterator it = e2.begin();
+       it != e2.end(); it++)
+    s2.insert(it->i);
+  return s1 == s2;
+}
+
+/* Helpers for constructing TDFA actions: */
+
 /* Find the set of reordering commands (if any) that will get us from
    state s to some existing state in the dfa (returns the state in
    question, appends reordering commands to r). Returns NULL is no
@@ -407,6 +428,7 @@ dfa::find_equivalent (state *s, tdfa_action &)
                 goto next_state;
 
           // TODOXXX check for existence of reordering tdfa_action r
+
           answer = t;
           goto cleanup;
         }
@@ -422,10 +444,75 @@ dfa::find_equivalent (state *s, tdfa_action &)
   return answer;
 }
 
+/* Generate position-save commands for any map items in new_k that do
+   not appear in old_k (old_k can be NULL). */
+tdfa_action
+dfa::compute_action (state_kernel *old_k, state_kernel *new_k)
+{
+  tdfa_action c;
+
+  set<map_item> old_items;
+  if (old_k != NULL)
+    for (state_kernel::const_iterator it = old_k->begin();
+         it != old_k->end(); it++)
+      for (list<map_item>::const_iterator jt = it->map_items.begin();
+           jt != it->map_items.end(); jt++)
+        old_items.insert(*jt);
+
+  // XXX: use a set, since we only need one position-save per new map item
+  set<map_item> store_items;
+  for (state_kernel::const_iterator it = new_k->begin();
+       it != new_k->end(); it++)
+    for (list<map_item>::const_iterator jt = it->map_items.begin();
+         jt != it->map_items.end(); jt++)
+      if (old_items.find(*jt) == old_items.end())
+        store_items.insert(*jt);
+
+  for (set<map_item>::iterator it = store_items.begin();
+       it != store_items.end(); it++)
+    {
+      // append m[i,n] <- <curr position> to c
+      tdfa_insn insn;
+      insn.to = *it;
+      insn.save_tag = false;
+      insn.save_pos = true;
+      c.push_back(insn);
+    }
+
+  return c;
+}
+
+tdfa_action
+dfa::compute_finalizer (state *s)
+{
+  // TODO VERIFY THAT THIS WORKS -- CAN THERE BE CONFLICTS?
+  tdfa_action c;
+  assert (s->accept_kp != NULL);
+
+  // iterate map items m[i,j]
+  for (list<map_item>::iterator it = s->accept_kp->map_items.begin();
+       it != s->accept_kp->map_items.end(); it++)
+    {
+      // append t[i] <- m[i,j] to c
+      tdfa_insn insn;
+      insn.from = *it;
+      insn.save_tag = true;
+      insn.save_pos = false;
+      c.push_back(insn);
+    }
+
+  return c;
+}
+
+/* The main DFA-construction algorithm: */
 
 dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
   : orig_nfa(i), nstates(0), ntags(ntags), outcome_snippets(outcome_snippets)
 {
+#ifdef STAPREGEX_DEBUG_TNFA
+  cerr << "DFA CONSTRUCTION (ntags=" << ntags << "):" << endl;
+#endif
+
   /* Initialize empty linked list of states: */
   first = last = NULL;
 
@@ -433,14 +520,19 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
   state_kernel *seed_kernel = make_kernel(start);
   state_kernel *initial_kernel = te_closure(seed_kernel, ntags, true);
   delete seed_kernel;
-  state *initial = add_state(new state(initial_kernel));
+  state *initial = add_state(new state(this, initial_kernel));
   queue<state *> worklist; worklist.push(initial);
+
+  initializer = compute_action(NULL, initial_kernel);
+#ifdef STAPREGEX_DEBUG_TNFA
+  cerr << " - constructed initializer " << initializer << endl << endl;
+#endif
 
   while (!worklist.empty())
     {
       state *curr = worklist.front(); worklist.pop();
 
-      vector<list<ins *> > edges(NUM_REAL_CHARS);
+      vector<list<kernel_point> > edges(NUM_REAL_CHARS);
 
       /* Using the CHAR instructions in kernel, build the initial
          table of spans for curr. Also check for final states. */
@@ -450,35 +542,56 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
         {
           if (it->i->i.tag == CHAR)
             {
+              // Add a new kernel_point for each targeted insn:
               for (ins *j = &it->i[1]; j < (ins *) it->i->i.link; j++)
-                edges[j->c.value].push_back((ins *) it->i->i.link);
+                {
+                  // XXX: deallocate together with span table
+                  kernel_point point;
+                  point.i = (ins *) it->i->i.link;
+                  point.priority = make_pair(0,0);
+                  point.map_items = it->map_items; // copy map items
+                  edges[j->c.value].push_back(point);
+                }
             }
           else if (it->i->i.tag == ACCEPT)
             {
-              /* Always prefer the highest numbered outcome: */
+              /* In case of multiple accepting NFA states,
+                 prefer the highest numbered outcome: */
+              if (!curr->accepts || it->i->i.param > curr->accept_outcome)
+                {
+                  curr->accept_kp = &*it;
+                  curr->accept_outcome = it->i->i.param;
+                }
               curr->accepts = true;
-              curr->accept_outcome = max(it->i->i.param, curr->accept_outcome);
             }
+        }
+
+      /* If the state was marked as accepting, add a finalizer: */
+      if (curr->accepts)
+        {
+          assert(curr->finalizer.empty()); // XXX: only process a state once
+          curr->finalizer = compute_finalizer(curr);
         }
 
       for (unsigned c = 0; c < NUM_REAL_CHARS; )
         {
-          list <ins *> e = edges[c];
+          list <kernel_point> e = edges[c];
           assert (!e.empty()); // XXX: ensured by fail_re in stapregex_compile
 
           span s;
 
           s.lb = c;
 
-          while (++c < NUM_REAL_CHARS && edges[c] == e) ;
+          // TODOXXX: what if list<ins *> is the same but map_items are not?
+          while (++c < NUM_REAL_CHARS && same_ins(edges[c], e)) ;
 
           s.ub = c - 1;
 
           s.reach_pairs = new state_kernel;
 
-          for (list<ins *>::iterator it = e.begin();
+          for (list<kernel_point>::iterator it = e.begin();
                it != e.end(); it++)
-            add_kernel (s.reach_pairs, *it);
+            s.reach_pairs->push_back(*it);
 
           curr->spans.push_back(s);
         }
@@ -492,36 +605,11 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
 
           /* Set up candidate target state: */
           state_kernel *u_pairs = te_closure(reach_pairs, ntags);
-          state *target = new state(u_pairs);
-          tdfa_action c;
+          state *target = new state(this, u_pairs);
 
           /* Generate position-save commands for any map items
              that do not appear in curr->kernel: */
-
-          set<map_item> all_items;
-          for (state_kernel::const_iterator jt = curr->kernel->begin();
-               jt != curr->kernel->end(); jt++)
-            for (list<map_item>::const_iterator kt = jt->map_items.begin();
-                 kt != jt->map_items.end(); jt++)
-              all_items.insert(*kt);
-
-          list<map_item> store_items;
-          for (state_kernel::const_iterator jt = u_pairs->begin();
-               jt != u_pairs->end(); jt++)
-            for (list<map_item>::const_iterator kt = jt->map_items.begin();
-                kt != jt->map_items.end(); kt++)
-              if (all_items.find(*kt) == all_items.end())
-                store_items.push_back(*kt);
-
-          for (list<map_item>::iterator jt = store_items.begin();
-               jt != store_items.end(); jt++)
-            {
-              // append m[i,n] <- <curr position> to c
-              tdfa_insn insn;
-              insn.to = *jt;
-              insn.save_pos = true;
-              c.push_back(insn);
-            }
+          tdfa_action c = compute_action(curr->kernel, u_pairs);
 
           /* If there is a state t_prime in states such that some
              sequence of reordering commands r produces t_prime
@@ -530,26 +618,35 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
           state *t_prime = find_equivalent(target, c);
           if (t_prime != NULL)
             {
+              assert (t_prime != target);
+#ifdef STAPREGEX_DEBUG_TNFA
+              // cerr << "   - found equivalent " << t_prime;
+              // cerr << "   - for newly created target " << target << endl;
+#endif
               delete target;
             }
           else
             {
+#ifdef STAPREGEX_DEBUG_TNFA
+              // cerr << "   - add newly created target " << target << endl;
+#endif
               /* We need to actually add target to the dfa: */
               t_prime = target;
               add_state(t_prime);
               worklist.push(t_prime);
-
-              if (t_prime->accepts)
-                {
-                  // TODOXXX set the finisher of t_prime
-                }
             }
 
           /* Set the transition: */
           it->to = t_prime;
           it->action = c;
         }
+#ifdef STAPREGEX_DEBUG_TNFA
+      cerr << " - constructed " << curr << endl;
+#endif
     }
+#ifdef STAPREGEX_DEBUG_TNFA
+      cerr << endl;
+#endif
 }
 
 dfa::~dfa ()
@@ -671,6 +768,13 @@ dfa::emit_tagsave (translator_output *, std::string,
 // ------------------------------------------------------------------------
 
 std::ostream&
+operator << (std::ostream &o, const map_item& m)
+{
+  o << "m[" << m.first << "," << m.second << "]";
+  return o;
+}
+
+std::ostream&
 operator << (std::ostream &o, const tdfa_action& a)
 {
   for (list<tdfa_insn>::const_iterator it = a.begin();
@@ -678,12 +782,15 @@ operator << (std::ostream &o, const tdfa_action& a)
     {
       if (it != a.begin()) o << "; ";
 
-      o << "m[" << it->to.first << "," << it->to.second << "] <- ";
+      if (it->save_tag)
+        o << "t[" << it->from.first << "] <- ";
+      else
+        o << it->to << " <- ";
 
       if (it->save_pos)
         o << "p";
       else
-        o << "m[" << it->from.first << "," << it->from.second << "]";
+        o << it->from;
     }
 
   return o;
@@ -700,11 +807,38 @@ void
 state::print (translator_output *o) const
 {
   o->line() << "state " << label;
+#ifdef STAPREGEX_DEBUG_TNFA
+  // For debugging, also show the kernel:
+  ins *base = owner->orig_nfa;
+  o->line() << " w/kernel {";
+  for (state_kernel::iterator it = kernel->begin();
+       it != kernel->end(); it++)
+    {
+      if (it != kernel->begin()) o->line() << "; ";
+      o->line() << (it->i - base);
+      o->line() << "[" << it->priority << "]";
+      if (!it->map_items.empty())
+        {
+          o->line() << ":";
+          for (list<map_item>::iterator jt = it->map_items.begin();
+               jt != it->map_items.end(); jt++)
+            {
+              if (jt != it->map_items.begin()) o->line() << ",";
+              o->line() << *jt;
+            }
+        }
+    }
+  o->line() << "}";
+  if (accepts || !finalizer.empty())
+    o->newline() << "  ";
+#endif
+
   if (accepts)
     o->line() << " accepts " << accept_outcome;
   if (!finalizer.empty())
-    o->line() << " [" << finalizer << "]";
+    o->line() << " with finalizer {" << finalizer << "}";
 
+  // TODOXXX: factor this out to span::print()
   o->indent(1);
   for (list<span>::const_iterator it = spans.begin();
        it != spans.end(); it++)
@@ -725,15 +859,22 @@ state::print (translator_output *o) const
       o->line() << "' -> " << it->to->label;
 
       if (!it->action.empty())
-        o->line() << " [" << it->action << "]";
+        o->line() << " {" << it->action << "}";
     }
   o->newline(-1);
 }
 
 void
-dfa::print (std::ostream& o) const
+state::print (std::ostream &o) const
 {
   translator_output to(o); print(&to);
+}
+
+std::ostream&
+operator << (std::ostream &o, const state *s)
+{
+  s->print(o);
+  return o;
 }
 
 void
@@ -746,6 +887,12 @@ dfa::print (translator_output *o) const
       o->newline();
     }
   o->newline();
+}
+
+void
+dfa::print (std::ostream& o) const
+{
+  translator_output to(o); print(&to);
 }
 
 std::ostream&
