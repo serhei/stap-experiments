@@ -18,6 +18,7 @@
 #include <list>
 #include <map>
 #include <vector>
+#include <stack>
 #include <queue>
 #include <utility>
 
@@ -146,6 +147,11 @@ arc_compare (const arc_priority& a, const arc_priority& b)
   else if (a.second < b.second)
     y = y << (b.second - a.second);
 
+  // Special case: 0/n </> 0/m iff m </> n.
+  // This is because such priorities are obtained by refine_lower().
+  if (x == 0 && y == 0)
+    return ( a.second == b.second ? 0 : a.second < b.second ? 1 : -1 );
+
   return ( x == y ? 0 : x < y ? -1 : 1 );
 }
 
@@ -204,13 +210,15 @@ state_kernel *
 te_closure (state_kernel *start, int ntags, bool is_initial = false)
 {
   state_kernel *closure = new state_kernel(*start);
-  queue<kernel_point> worklist;
+  stack<kernel_point> worklist;
+  // XXX: state_kernel is a list<kernel_point> so we avoid iterator
+  // invalidation and make a new copy of each kernel_point from start
 
   /* To avoid searching through closure incessantly when retrieving
      information about existing elements, the following caches are
      needed: */
   vector<unsigned> max_tags (ntags, 0);
-  map<ins *, list<kernel_point> > closure_map;
+  map<ins *, list<list<kernel_point>::iterator> > closure_map;
 
   /* Reset priorities and cache initial elements of closure: */
   for (state_kernel::iterator it = closure->begin();
@@ -225,12 +233,12 @@ te_closure (state_kernel *start, int ntags, bool is_initial = false)
            jt != it->map_items.end(); jt++)
         max_tags[jt->first] = max(jt->second, max_tags[jt->first]);
 
-      closure_map[it->i].push_back(*it);
+      closure_map[it->i].push_back(it);
     }
 
   while (!worklist.empty())
     {
-      kernel_point point = worklist.front(); worklist.pop();
+      kernel_point point = worklist.top(); worklist.pop();
 
       // Identify e-transitions depending on the opcode.
       // There are at most two e-transitions emerging from an insn.
@@ -305,7 +313,7 @@ te_closure (state_kernel *start, int ntags, bool is_initial = false)
         {
           // target = NULL;
           // tag = -1;
-          // ^^^ these are overwritten from other_target / other_tag immediately
+          // <- XXX will be overwritten by other_target / other_tag immediately
           goto next_target;
         }
       next.parents.insert(next.i);
@@ -338,38 +346,51 @@ te_closure (state_kernel *start, int ntags, bool is_initial = false)
           max_tags[tag] = x;
         }
 
+      /* Deal with similar transitions that have a different priority: */
       already_found = false;
-
-      /* Deal with similar transitions that have a different priority. */
-      for (list<kernel_point>::iterator it = closure_map[next.i].begin();
+      for (list<list<kernel_point>::iterator>::iterator it
+             = closure_map[next.i].begin();
            it != closure_map[next.i].end(); )
         {
-          int result = arc_compare(it->priority, next.priority);
+          // NB: it is an iterator into closure_map[next.i],
+          // while *it is an iterator into closure
 
+          int result = arc_compare((*it)->priority, next.priority);
+          if (result == 0)
+            cerr << "**DEBUG** identical arc_priorities "
+                 << (*it)->priority << " " << next.priority << endl;
+          assert (result != 0); // TODOXXX expected to fail? however, the proper semantics for this case are not yet clear to me
           if (result > 0) {
+            // next.priority is higher, delete existing element
+            closure->erase(*it);
+
             // obnoxious shuffle to avoid iterator invalidation
-            list<kernel_point>::iterator old_it = it;
+            list<list<kernel_point>::iterator>::iterator old_it = it;
             it++;
             closure_map[next.i].erase(old_it);
             continue;
-          } else if (result == 0) {
+          } else { // result < 0
+            // next.priority is lower, skip adding next
             already_found = true;
           }
           it++;
         }
 
       if (!already_found) {
+        // Store the element in closure:
+        closure->push_back(next);
+        worklist.push(next);
+
         // Store the element in relevant caches:
 
-        closure_map[next.i].push_back(next);
+        list<kernel_point>::iterator next_it = closure->end();
+        next_it --; // XXX rewind to just-pushed element
+        closure_map[next.i].push_back(next_it);
 
         for (list<map_item>::iterator jt = next.map_items.begin();
              jt != next.map_items.end(); jt++)
           max_tags[jt->first] = max(jt->second, max_tags[jt->first]);
 
-        // Store the element in closure:
-        closure->push_back(next);
-        worklist.push(next);
       }
 
     next_target:
