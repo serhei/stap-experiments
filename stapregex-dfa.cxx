@@ -649,7 +649,9 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
     {
       state *curr = worklist.front(); worklist.pop();
 
-      vector<list<kernel_point> > edges(NUM_REAL_CHARS);
+      // Kernel points before and after each edge:
+      vector<list<kernel_point> > edge_begin(NUM_REAL_CHARS);
+      vector<list<kernel_point> > edge_end(NUM_REAL_CHARS);
 
       /* Using the CHAR instructions in kernel, build the initial
          table of spans for curr. Also check for final states. */
@@ -667,7 +669,9 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
                   point.i = (ins *) it->i->i.link;
                   point.priority = make_pair(0,0);
                   point.map_items = it->map_items; // copy map items
-                  edges[j->c.value].push_back(point);
+
+                  edge_begin[j->c.value].push_back(*it);
+                  edge_end[j->c.value].push_back(point);
                 }
             }
           else if (it->i->i.tag == ACCEPT)
@@ -692,22 +696,27 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
 
       for (unsigned c = 0; c < NUM_REAL_CHARS; )
         {
-          list <kernel_point> e = edges[c];
-          assert (!e.empty()); // XXX: ensured by fail_re in stapregex_compile
+          list<kernel_point> eb = edge_begin[c];
+          list<kernel_point> ee = edge_end[c];
+          assert (!ee.empty()); // XXX: ensured by fail_re in stapregex_compile
 
           span s;
 
           s.lb = c;
 
           // TODOXXX: what if list<ins *> is the same but map_items are not?
-          while (++c < NUM_REAL_CHARS && same_ins(edges[c], e)) ;
+          while (++c < NUM_REAL_CHARS && same_ins(edge_end[c], ee)) ;
 
           s.ub = c - 1;
 
-          s.reach_pairs = new state_kernel;
+          s.reach_pairs = new state_kernel; // TODOXXX dealloc?
+          s.jump_pairs = new state_kernel; // TODOXXX dealloc?
 
-          for (list<kernel_point>::iterator it = e.begin();
-               it != e.end(); it++)
+          for (list<kernel_point>::iterator it = eb.begin();
+               it != eb.end(); it++)
+            s.jump_pairs->push_back(*it);
+          for (list<kernel_point>::iterator it = ee.begin();
+               it != ee.end(); it++)
             s.reach_pairs->push_back(*it);
 
           curr->spans.push_back(s);
@@ -721,15 +730,14 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
       for (list<span>::iterator it = curr->spans.begin();
            it != curr->spans.end(); it++)
         {
-          state_kernel *reach_pairs = it->reach_pairs;
-
           /* Set up candidate target state: */
-          state_kernel *u_pairs = te_closure(reach_pairs, ntags);
+          state_kernel *u_pairs = te_closure(it->reach_pairs, ntags);
           state *target = new state(this, u_pairs);
 
           /* Generate position-save commands for any map items
-             that do not appear in curr->kernel: */
-          tdfa_action c = compute_action(curr->kernel, u_pairs);
+             that do not appear in TODOXXX the precursor to the edge: */
+          // TODOXXX tdfa_action c = compute_action(curr->kernel, u_pairs);
+          tdfa_action c = compute_action(it->jump_pairs, u_pairs);
 
           /* If there is a state t_prime in states such that some
              sequence of reordering commands r produces t_prime

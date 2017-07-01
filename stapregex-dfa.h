@@ -97,8 +97,8 @@ struct span {
   char lb, ub; // -- segment [lb, ub]
   state *to;
   tdfa_action action;
-  state_kernel *reach_pairs; // -- for the subset-construction
-                             // -- algorithm
+  state_kernel *jump_pairs; // -- kernel_points that jump to this span
+  state_kernel *reach_pairs; // -- starting point for te_closure computation
 
   void emit_jump (translator_output *o, const dfa *d) const;
   void emit_final (translator_output *o, const dfa *d) const;
