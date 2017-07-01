@@ -360,6 +360,7 @@ te_closure (state_kernel *start, int ntags, bool is_initial = false)
             cerr << "**DEBUG** identical arc_priorities "
                  << (*it)->priority << " " << next.priority << endl;
           assert (result != 0); // TODOXXX expected to fail? however, the proper semantics for this case are not yet clear to me
+
           if (result > 0) {
             // next.priority is higher, delete existing element
             closure->erase(*it);
@@ -373,6 +374,7 @@ te_closure (state_kernel *start, int ntags, bool is_initial = false)
             // next.priority is lower, skip adding next
             already_found = true;
           }
+
           it++;
         }
 
@@ -428,7 +430,7 @@ same_ins(list<kernel_point> &e1, list<kernel_point> &e2)
    question, appends reordering commands to r). Returns NULL is no
    suitable state is found. */
 state *
-dfa::find_equivalent (state *s, tdfa_action &)
+dfa::find_equivalent (state *s, tdfa_action &action)
 {
   state *answer = NULL;
 
@@ -439,6 +441,8 @@ dfa::find_equivalent (state *s, tdfa_action &)
   /* Check kernels of existing states for size equivalence and for
      unmarked items (similar to re2c's original algorithm): */
   unsigned n = s->kernel->size();
+  map<map_item, map_item> shift_map;
+  map<map_item, map_item> shift_back;
   for (state *t = first; t != NULL; t = t->next)
     {
       if (t->kernel->size() == n)
@@ -448,9 +452,101 @@ dfa::find_equivalent (state *s, tdfa_action &)
               if (!marked(it->i)) 
                 goto next_state;
 
-          // TODOXXX check for existence of reordering tdfa_action r
+          // Check for existence of a reordering tdfa_action r that will
+          // produce identical kernel_points with identical map values.
+
+          // XXX In the below code, we search for more-or-less an
+          // arbitrary permutation of map values.
+          //
+          // To simplify the algorithm, we could instead only check
+          // where lower-index map values are missing from s and
+          // replace them with higher-index map values. The paper
+          // claims this leads to only a slight penalty in number of
+          // TDFA states.
+
+          // Mapping must be one-to-one; check consistency in both directions:
+          shift_map.clear(); // map item of s -> map item of t
+          shift_back.clear(); // map item of t -> map item of s
+
+          for (state_kernel::iterator it = s->kernel->begin();
+               it != s->kernel->end(); it++)
+            {
+              kernel_point *kp1 = &*it;
+              kernel_point *kp2;
+
+              // Find matching kernel_point in t:
+              bool found_kp = false;
+              for (state_kernel::iterator jt = t->kernel->begin();
+                   jt != t->kernel->end(); jt++)
+                if (kp1->i == jt->i)
+                  {
+                    // XXX check that ins appears only once
+                    assert (!found_kp);
+                    kp2 = &*jt; // TODO found matching point
+                    found_kp = true;
+                  }
+              assert(found_kp);
+
+              set<int> seen_tags;
+              for (list<map_item>::iterator jt = kp1->map_items.begin();
+                   jt != kp1->map_items.end(); jt++)
+                {
+                  map_item mt1 = *jt;
+                  map_item mt2;
+
+                  // XXX check that tag appears only once
+                  assert (seen_tags.count(mt1.first) == 0);
+                  seen_tags.insert(mt1.first);
+
+                  // Find matching map_item in kp2
+                  bool found_tag = false;
+                  for (list<map_item>::iterator kt = kp2->map_items.begin();
+                       kt != kp2->map_items.end(); kt++)
+                    if (mt1.first == kt->first)
+                      {
+                        // XXX check that tag appears only once
+                        assert (!found_tag);
+                        mt2 = *kt;
+                        found_tag = true;
+                      }
+
+                  if (!found_tag) // if no matching tag, can't use this state
+                    goto next_state;
+                  if (shift_map.count(mt1) != 0
+                      && shift_map[mt1] != mt2) // if contradiction
+                    goto next_state;
+                  if (shift_back.count(mt2) != 0
+                      && shift_back[mt2] != mt1) // if contradiction
+                    goto next_state;
+
+                  shift_map[mt1] = mt2;
+                  shift_back[mt2] = mt1;
+                }
+
+              // XXX check that every tag in kp2 appears in seen_tag
+              for (list<map_item>::iterator jt = kp2->map_items.begin();
+                   jt != kp2->map_items.end(); jt++)
+                {
+                  int t2 = jt->first;
+                  if (seen_tags.count(t2) == 0)
+                    goto next_state;
+                }
+            }
+
+#ifdef STAPREGEX_DEBUG_TNFA
+          cerr << " -*- obtained valid reorder ";
+          for (map<map_item, map_item>::iterator it = shift_map.begin();
+               it != shift_map.end(); it++)
+            if (it->first != it->second)
+              cerr << it->first << "=>" << it->second << " ";
+          cerr << "to existing state " << t->label << endl;
+#endif
+
+          tdfa_action r;
+          // TODOXXX generate reordering commands based on the contents of shift_map[]
 
           answer = t;
+          action.insert(action.end(), r.begin(), r.end()); // XXX append
           goto cleanup;
         }
     next_state:
@@ -619,6 +715,9 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
 
       /* For each of the spans in curr, determine the reachable
          points assuming a character in the span. */
+#ifdef STAPREGEX_DEBUG_TNFA
+      cerr << "building transitions for state " << curr->label << ":" << endl;
+#endif
       for (list<span>::iterator it = curr->spans.begin();
            it != curr->spans.end(); it++)
         {
@@ -640,21 +739,17 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
           if (t_prime != NULL)
             {
               assert (t_prime != target);
-#ifdef STAPREGEX_DEBUG_TNFA
-              // cerr << "   - found equivalent " << t_prime;
-              // cerr << "   - for newly created target " << target << endl;
-#endif
               delete target;
             }
           else
             {
-#ifdef STAPREGEX_DEBUG_TNFA
-              // cerr << "   - add newly created target " << target << endl;
-#endif
               /* We need to actually add target to the dfa: */
               t_prime = target;
               add_state(t_prime);
               worklist.push(t_prime);
+#ifdef STAPREGEX_DEBUG_TNFA
+              cerr << " -*- add new state " << t_prime->label << endl;
+#endif
             }
 
           /* Set the transition: */
@@ -662,7 +757,7 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
           it->action = c;
         }
 #ifdef STAPREGEX_DEBUG_TNFA
-      cerr << " - constructed " << curr << endl;
+      cerr << " -> constructed " << curr << endl;
 #endif
     }
 #ifdef STAPREGEX_DEBUG_TNFA
@@ -828,6 +923,7 @@ void
 state::print (translator_output *o) const
 {
   o->line() << "state " << label;
+
 #ifdef STAPREGEX_DEBUG_TNFA
   // For debugging, also show the kernel:
   ins *base = owner->orig_nfa;
@@ -850,6 +946,23 @@ state::print (translator_output *o) const
         }
     }
   o->line() << "}";
+
+  // Also print information for constructing reorderings:
+  set<map_item> all_items;
+  for (state_kernel::iterator it = kernel->begin();
+       it != kernel->end(); it++)
+    for (list<map_item>::iterator jt = it->map_items.begin();
+         jt != it->map_items.end(); jt++)
+      all_items.insert(*jt);
+  if (!all_items.empty())
+    {
+      o->newline() << "  ";
+      o->line() << " with map_items ";
+      for (set<map_item>::iterator it = all_items.begin();
+           it != all_items.end(); it++)
+        o->line() << *it << " ";
+    }
+
   if (accepts || !finalizer.empty())
     o->newline() << "  ";
 #endif
@@ -877,7 +990,10 @@ state::print (translator_output *o) const
           print_escaped (o->line(), it->ub);
         }
 
-      o->line() << "' -> " << it->to->label;
+      if (it->to != NULL)
+        o->line() << "' -> " << it->to->label;
+      else
+        o->line() << "' -> <none>";
 
       if (!it->action.empty())
         o->line() << " {" << it->action << "}";
