@@ -544,6 +544,33 @@ dfa::find_equivalent (state *s, tdfa_action &action)
 
           tdfa_action r;
           // TODOXXX generate reordering commands based on the contents of shift_map[]
+          set<map_item> saved; // <- elements in shift_map but safe to overwrite
+          queue<map_item> to_shift;
+          for (map<map_item, map_item>::iterator it = shift_back.begin();
+               it != shift_back.end(); it++)
+            if (it->first != it->second) // skip trivial shifts
+              to_shift.push(it->first);
+          while (!to_shift.empty())
+            {
+              map_item elt = to_shift.front(); to_shift.pop();
+              if (shift_map.count(elt) != 0 && saved.count(elt) == 0)
+                {
+                  // Need to save it first -- put back on queue:
+                  to_shift.push(elt);
+                  // TODOXXX detect cyclical dependency (!!)
+                  continue;
+                }
+
+              tdfa_insn insn;
+              insn.to = elt;
+              insn.from = shift_back[elt];
+              insn.save_tag = false;
+              insn.save_pos = false;
+              r.push_back(insn);
+
+              // shift_back[elt] is now safe to overwrite
+              saved.insert(shift_back[elt]);
+            }
 
           answer = t;
           action.insert(action.end(), r.begin(), r.end()); // XXX append
