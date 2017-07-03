@@ -533,6 +533,50 @@ dfa::find_equivalent (state *s, tdfa_action &action)
                 }
             }
 
+// #ifdef STAPREGEX_DEBUG_TNFA
+//           cerr << " -*- PRE CYCLE CHECK DEBUG obtained valid reorder ";
+//           for (map<map_item, map_item>::iterator it = shift_map.begin();
+//                it != shift_map.end(); it++)
+//             if (it->first != it->second)
+//               cerr << it->first << "=>" << it->second << " ";
+//           cerr << "to existing state " << t->label << endl;
+// #endif
+
+#if 1
+          // Check for cyclical dependencies in the resulting reorder.
+          // XXX: If we find a cycle, just create a new state. We could
+          // also break the cycle with a temporary variable.
+          set<map_item> cycle_okay; cycle_okay.clear();
+          set<map_item> cycle_seen; cycle_seen.clear();
+          for (map<map_item, map_item>::iterator it = shift_map.begin();
+               it != shift_map.end(); it++)
+            {
+              map_item m = it->first;
+              if (cycle_okay.count(m) != 0)
+                continue; // -- already checked for cycle
+
+              while (shift_map.count(m) != 0 && shift_map[m] != m)
+                {
+                  if (cycle_okay.count(shift_map[m]) != 0)
+                    break; // -- found not-cycle
+                  if (cycle_seen.count(shift_map[m]) != 0)
+                    goto next_state; // -- found cycle
+                  cycle_seen.insert(m);
+                  m = shift_map[m]; // TODOXXX: paranoid about overwriting m - DOUBLE CHECK
+                }
+
+              // If we reach the end of the chain, or find a map item
+              // where shift_map[m] == m, this is not considered a
+              // cycle, and therefore none of the map items leading to
+              // here are in cycles:
+              cycle_okay.insert(m);
+              for (set<map_item>::iterator jt = cycle_seen.begin();
+                   jt != cycle_seen.end(); jt++)
+                  cycle_okay.insert(*jt);
+              cycle_seen.clear();
+            }
+#endif
+
 #ifdef STAPREGEX_DEBUG_TNFA
           cerr << " -*- obtained valid reorder ";
           for (map<map_item, map_item>::iterator it = shift_map.begin();
@@ -542,9 +586,9 @@ dfa::find_equivalent (state *s, tdfa_action &action)
           cerr << "to existing state " << t->label << endl;
 #endif
 
+          // Generate reordering command based on the contents of shift_map:
           tdfa_action r;
-          // TODOXXX generate reordering commands based on the contents of shift_map[]
-          set<map_item> saved; // <- elements in shift_map but safe to overwrite
+          set<map_item> saved; saved.clear(); // <- elts safe to overwite
           queue<map_item> to_shift;
           for (map<map_item, map_item>::iterator it = shift_back.begin();
                it != shift_back.end(); it++)
@@ -557,7 +601,6 @@ dfa::find_equivalent (state *s, tdfa_action &action)
                 {
                   // Need to save it first -- put back on queue:
                   to_shift.push(elt);
-                  // TODOXXX detect cyclical dependency (!!)
                   continue;
                 }
 
