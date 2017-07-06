@@ -86,10 +86,9 @@ struct kernel_point {
   arc_priority priority; // -- used in tagged e-closure computation
   std::list<map_item> map_items;
   std::set<ins *> parents; // -- used for infinite-loop-detection
+  void print (std::ostream &o, ins *base) const;
 };
 typedef std::list<kernel_point> state_kernel; // TODO: does it make sense to have duplicate ins inside a state-kernel?
-
-// TODO operator << for state_kernel
 
 /* Corresponds to a tagged-DFA transition arc, complete with
    subexpression map reordering and such. */

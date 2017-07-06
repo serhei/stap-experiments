@@ -210,7 +210,7 @@ make_kernel (ins *i)
    reachable' from a given initial set of points. Absent tagging, this
    becomes a bog-standard NFA e_closure construction. */
 state_kernel *
-te_closure (state_kernel *start, int ntags, bool is_initial = false)
+te_closure (dfa *dfa, state_kernel *start, int ntags, bool is_initial = false)
 {
   state_kernel *closure = new state_kernel(*start);
   stack<kernel_point> worklist;
@@ -364,9 +364,27 @@ te_closure (state_kernel *start, int ntags, bool is_initial = false)
 
           int result = arc_compare((*it)->priority, next.priority);
           if (result == 0)
-            cerr << "**DEBUG** identical arc_priorities "
-                 << (*it)->priority << " " << next.priority << endl;
-          assert (result != 0); // TODOXXX expected to fail? however, the proper semantics for this case are not yet clear to me
+            {
+              ins *base = dfa->orig_nfa;
+              cerr << "**DEBUG** identical arc_priorities for ";
+              (*it)->print(cerr, base);
+              cerr << " and ";
+              next.print(cerr, base);
+              cerr << endl;
+            }
+#if 0
+          if (result == 0 && (*it)->i == next.i)
+            {
+              // TODOXXX DOUBLECHECK Reached the same kernel_point via two
+              // alternate paths.  Merge map_items from next into *it:
+              cerr << "**DEBUG** (merging paths for same ins)" << endl;
+              for (list<map_item>::iterator jt = next.map_items.begin();
+                   jt != next.map_items.end(); jt++)
+                (*it)->map_items.push_back(*jt);
+            }
+          else
+#endif
+            assert (result != 0); // TODOXXX expected to fail? however, the proper semantics for this case are not yet clear to me
 
           if (result > 0) {
             // next.priority is higher, delete existing element
@@ -712,7 +730,7 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
 
   ins *start = &i[0];
   state_kernel *seed_kernel = make_kernel(start);
-  state_kernel *initial_kernel = te_closure(seed_kernel, ntags, true);
+  state_kernel *initial_kernel = te_closure(this, seed_kernel, ntags, true);
   delete seed_kernel;
   state *initial = add_state(new state(this, initial_kernel));
   queue<state *> worklist; worklist.push(initial);
@@ -808,7 +826,7 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
            it != curr->spans.end(); it++)
         {
           /* Set up candidate target state: */
-          state_kernel *u_pairs = te_closure(it->reach_pairs, ntags);
+          state_kernel *u_pairs = te_closure(this, it->reach_pairs, ntags);
           state *target = new state(this, u_pairs);
 
           /* Generate position-save commands for any map items
@@ -1005,6 +1023,23 @@ operator << (std::ostream &o, const arc_priority& p)
 }
 
 void
+kernel_point::print (std::ostream &o, ins *base) const
+{
+  o << (i - base);
+  o << "[" << priority << "]";
+  if (!map_items.empty())
+    {
+      o << ":";
+      for (list<map_item>::const_iterator it = map_items.begin();
+           it != map_items.end(); it++)
+        {
+          if (it != map_items.begin()) o << ",";
+          o << *it;
+        }
+    }
+}
+
+void
 state::print (translator_output *o) const
 {
   o->line() << "state " << label;
@@ -1017,18 +1052,7 @@ state::print (translator_output *o) const
        it != kernel->end(); it++)
     {
       if (it != kernel->begin()) o->line() << "; ";
-      o->line() << (it->i - base);
-      o->line() << "[" << it->priority << "]";
-      if (!it->map_items.empty())
-        {
-          o->line() << ":";
-          for (list<map_item>::iterator jt = it->map_items.begin();
-               jt != it->map_items.end(); jt++)
-            {
-              if (jt != it->map_items.begin()) o->line() << ",";
-              o->line() << *jt;
-            }
-        }
+      it->print(o->line(), base);
     }
   o->line() << "}";
 
