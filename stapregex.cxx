@@ -140,7 +140,7 @@ stapdfa::emit_declaration (translator_output *o) const
   if (do_tag)
     {
       o->newline() << "strlcpy (c->last_match.matched_str, str, MAXSTRINGLEN);";
-      o->newline() << "c->last_match.result = 1";
+      o->newline() << "c->last_match.result = 1;";
       content->emit_tagsave(o, "c->last_match.tag_states", "c->last_match.tag_vals", "c->last_match.num_final_tags");
     }
   o->newline() << "return 1;";
