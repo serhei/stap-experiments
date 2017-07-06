@@ -71,7 +71,7 @@ std::ostream& operator << (std::ostream &o, const tdfa_action& a);
    an eye on whether this turns out to be enough in practice.
 
    TODOXXX: May want to check how this plays out in 32-bit architectures. */
-typedef std::pair<unsigned long, unsigned> arc_priority;
+typedef std::pair<unsigned long long, unsigned> arc_priority;
 arc_priority refine_higher(const arc_priority& a);
 arc_priority refine_lower(const arc_priority& a);
 int arc_compare(const arc_priority& a, const arc_priority& b);

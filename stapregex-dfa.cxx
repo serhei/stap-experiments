@@ -21,6 +21,7 @@
 #include <stack>
 #include <queue>
 #include <utility>
+#include <climits>
 
 #include "translator-output.h"
 
@@ -127,12 +128,14 @@ stapregex_compile (regexp *re, const std::string& match_snippet,
 arc_priority
 refine_higher(const arc_priority& a)
 {
+  assert (a.first <= ULLONG_MAX/4); // XXX detect overflow
   return make_pair(2 * a.first + 1, a.second + 1);
 }
 
 arc_priority
 refine_lower (const arc_priority& a)
 {
+  assert (a.first <= ULLONG_MAX/4); // XXX detect overflow
   return make_pair(2 * a.first, a.second + 1);
 }
 
@@ -220,11 +223,15 @@ te_closure (state_kernel *start, int ntags, bool is_initial = false)
   vector<unsigned> max_tags (ntags, 0);
   map<ins *, list<list<kernel_point>::iterator> > closure_map;
 
-  /* Reset priorities and cache initial elements of closure: */
+  /* Cache initial elements of closure: */
   for (state_kernel::iterator it = closure->begin();
        it != closure->end(); it++)
     {
-      it->priority = make_pair(0,0);
+      // TODOXXX Retaining the priority from the previous state has
+      // the potential to overflow the arc_priority representation if
+      // there is too much branching. Needs careful testing and perhaps
+      // a step to rebalance the priorities in the initial kernel.
+      // TODOXXX it->priority = make_pair(0,0); // -- does not quite work
       worklist.push(*it);
 
       // Store the element in relevant caches:
@@ -737,7 +744,7 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
                   // XXX: deallocate together with span table
                   kernel_point point;
                   point.i = (ins *) it->i->i.link;
-                  point.priority = make_pair(0,0);
+                  point.priority = it->priority;
                   point.map_items = it->map_items; // copy map items
 
                   edge_begin[j->c.value].push_back(*it);
