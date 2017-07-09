@@ -912,8 +912,9 @@ span::emit_jump (translator_output *o, const dfa *d) const
       return;
     }
 
-  d->emit_action(o, action);
+  // We record map_items *after* consuming YYCURSOR:
   o->newline () << "YYCURSOR++;";
+  d->emit_action(o, action);
   o->newline () << "goto yystate" << to->label << ";";
 }
 
@@ -923,9 +924,13 @@ void
 span::emit_final (translator_output *o, const dfa *d) const
 {
   assert (to->accepts); // XXX: must guarantee correct usage of emit_final()
+
+  // We record map_items *after* consuming YYCURSOR:
+  o->newline() << "YYCURSOR++;";
   d->emit_action(o, action);
-  // TODOXXX handle longest-match priority here!
+  // TODOXXX handle longest-match priority here!!
   d->emit_action(o, to->finalizer);
+
   o->newline() << d->outcome_snippets[to->accept_outcome];
   o->newline() << "goto yyfinish;";
 }

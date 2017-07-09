@@ -69,7 +69,9 @@ function matched:string(n:long)
 
   length = end - start;
 
-  strlcpy(STAP_RETVALUE, CONTEXT->last_match.matched_str + start, length);
+  // TODOXXX assert (start <= strlen(matched_str)) ??
+  // XXX: Must add 1 to length to account for NUL byte in strlcpy().
+  strlcpy(STAP_RETVALUE, CONTEXT->last_match.matched_str + start, length + 1);
 %}
 
 // TODOXXX: return # of matched subexpressions
