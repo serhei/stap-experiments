@@ -164,11 +164,19 @@ state::state (dfa *owner, state_kernel *kernel)
   : owner(owner), label(~0), next(NULL), kernel(kernel),
     accepts(false), accept_outcome(0) {}
 
+void
+dfa::add_map_item (const map_item &m)
+{
+  // TODOXXX: later, compute a mapping into a single-level tag_states array:
+  // TODOXXX: can drop the +1 and instead subtract 1 in YYTAG
+  nmapitems = max(nmapitems, m.second) + 1;
+}
+
 state *
 dfa::add_state (state *s)
 {
   s->label = nstates++;
-  
+
   if (last == NULL)
     {
       last = s;
@@ -683,6 +691,9 @@ dfa::compute_action (state_kernel *old_k, state_kernel *new_k)
   for (set<map_item>::iterator it = store_items.begin();
        it != store_items.end(); it++)
     {
+      // ensure room for m[i,n] is present in tag_states:
+      add_map_item(*it);
+
       // append m[i,n] <- <curr position> to c
       tdfa_insn insn;
       insn.to = *it;
@@ -719,7 +730,8 @@ dfa::compute_finalizer (state *s)
 /* The main DFA-construction algorithm: */
 
 dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
-  : orig_nfa(i), nstates(0), ntags(ntags), outcome_snippets(outcome_snippets)
+  : orig_nfa(i), nstates(0), nmapitems(0), ntags(ntags),
+    outcome_snippets(outcome_snippets)
 {
 #ifdef STAPREGEX_DEBUG_TNFA
   cerr << "DFA CONSTRUCTION (ntags=" << ntags << "):" << endl;
@@ -938,7 +950,7 @@ state::emit (translator_output *o, const dfa *d) const
       if (it->lb == '\0')
         {
           o->newline() << "case " << c_char('\0') << ":";
-          it->emit_final(o, d); // TODOXXX extra function may be unneeded
+          it->emit_final(o, d);
         }
 
       // Emit labels to handle all the other elements of the span:

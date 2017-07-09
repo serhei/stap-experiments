@@ -137,6 +137,7 @@ struct dfa {
   unsigned nstates;
 
   // Infrastructure to deal with tagging:
+  unsigned nmapitems;
   unsigned ntags;
   tdfa_action initializer; // -- run before entering start state
   std::vector<std::string> outcome_snippets;
@@ -152,6 +153,7 @@ struct dfa {
   void print (std::ostream& o) const;
 
 private:
+  void add_map_item (const map_item &m);
   state *add_state (state* s);
   state *find_equivalent (state *s, tdfa_action &r);
   tdfa_action compute_action (state_kernel *old_k, state_kernel *new_k);
