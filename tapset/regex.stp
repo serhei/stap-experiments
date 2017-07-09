@@ -46,10 +46,9 @@ function matched:string(n:long)
   start_ix = 2 * STAP_ARG_n, end_ix = start_ix + 1;
 
   if (end_ix >= CONTEXT->last_match.num_final_tags) {
-    return; // -- TODOXXX for testing matching before implementing tagsave
-    // snprintf(CONTEXT->error_buffer, sizeof(CONTEXT->error_buffer),
-    //          "Attempted to get nonexistent subexpression %lld", STAP_ARG_n);
-    // CONTEXT->last_error = CONTEXT->error_buffer;
+    snprintf(CONTEXT->error_buffer, sizeof(CONTEXT->error_buffer),
+             "Attempted to get nonexistent subexpression %lld", STAP_ARG_n);
+    CONTEXT->last_error = CONTEXT->error_buffer;
   }
 
   start = CONTEXT->last_match.tag_vals[start_ix];

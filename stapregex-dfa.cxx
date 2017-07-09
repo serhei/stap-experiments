@@ -894,33 +894,38 @@ dfa::~dfa ()
 
 // ------------------------------------------------------------------------
 
-// TODOXXX add emission instructions for tag_ops
-
 void
 span::emit_jump (translator_output *o, const dfa *d) const
 {
 #ifdef STAPREGEX_DEBUG_MATCH
-  o->newline () << "printf(\" --> GOTO yystate%d\\n\", " << to->label << ");";
+  o->newline () << "_stp_warn(\" --> @%ld GOTO yystate%d\\n\", "
+                << "(YYCURSOR-YYSTART), " << to->label << ");";
 #endif
 
-  // TODOXXX tags feature allows proper longest-match priority
+  // TODOXXX tags feature should allow proper longest-match priority
+  // TODOXXX if (match_length > max_length) { final_match = curr_match; }
+  // TODOXXX continue matching;
+
   if (to->accepts)
     {
       emit_final(o, d);
+      return;
     }
-  else
-    {
-      o->newline () << "YYCURSOR++;";
-      o->newline () << "goto yystate" << to->label << ";";
-    }
+
+  d->emit_action(o, action);
+  o->newline () << "YYCURSOR++;";
+  o->newline () << "goto yystate" << to->label << ";";
 }
 
-/* Assuming the target DFA of the span is a final state, emit code to
+/* Assuming the target DFA state of the span is a final state, emit code to
    (TODOXXX) cleanup tags and exit with a final answer. */
 void
 span::emit_final (translator_output *o, const dfa *d) const
 {
   assert (to->accepts); // XXX: must guarantee correct usage of emit_final()
+  d->emit_action(o, action);
+  // TODOXXX handle longest-match priority here!
+  d->emit_action(o, to->finalizer);
   o->newline() << d->outcome_snippets[to->accept_outcome];
   o->newline() << "goto yyfinish;";
 }
@@ -939,7 +944,8 @@ state::emit (translator_output *o, const dfa *d) const
 {
   o->newline() << "yystate" << label << ": ";
 #ifdef STAPREGEX_DEBUG_MATCH
-  o->newline () << "printf(\"READ '%s' %c\", cur, *YYCURSOR);";
+  o->newline () << "_stp_warn(\"@%ld READ '%s' %c\", "
+                << "(YYCURSOR-YYSTART), cur, *YYCURSOR);";
 #endif
   o->newline() << "switch (*YYCURSOR) {";
   o->indent(1);
@@ -974,9 +980,18 @@ dfa::emit (translator_output *o) const
   o->newline() << "{";
   o->newline(1);
 
+  // Initialize tags:
+  o->newline() << "unsigned int i;";
+  o->newline() << "for (i = 0; i < " << ntags << "; i++)";
+  o->newline(1) << "YYFINAL(i) = -1;";
+  o->indent(-1);
+
+  emit_action(o, initializer);
+
   // XXX: workaround for empty regex
   if (first->accepts)
     {
+      emit_action(o, first->finalizer);
       o->newline() << outcome_snippets[first->accept_outcome];
       o->newline() << "goto yyfinish;";      
     }
@@ -990,10 +1005,34 @@ dfa::emit (translator_output *o) const
 }
 
 void
-dfa::emit_tagsave (translator_output *, std::string,
-                   std::string, std::string) const
+dfa::emit_action (translator_output *o, const tdfa_action &act) const
 {
-  // TODOXXX implement after testing the preceding algorithms
+#ifdef STAPREGEX_DEBUG_MATCH
+  o->newline () << "_stp_warn(\" --> @%ld, SET_TAG %s\\n\", "
+                << "(YYCURSOR-YYSTART), \"" << act << "\");";
+#endif
+  for (tdfa_action::const_iterator it = act.begin(); it != act.end(); it++)
+    {
+      if (it->save_tag)
+        o->newline() << "YYFINAL(" << it->from.first << ") = ";
+      else
+        o->newline() << "YYTAG(" << it->to.first
+                     << "," << it->to.second << ") = ";
+      if (it->save_pos)
+        o->line() << "(YYCURSOR-YYSTART)";
+      else
+        o->line() << "YYTAG(" << it->from.first
+                  << "," << it->from.second << ")";
+      o->line() << ";";
+    }
+}
+
+void
+dfa::emit_tagsave (translator_output *o, std::string,
+                   std::string, std::string num_final_tags) const
+{
+  // TODOXXX ignoring other two snippets (tag_states and tag_vals)
+  o->newline() << num_final_tags << " = " << ntags << ";";
 }
 
 // ------------------------------------------------------------------------
