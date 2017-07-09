@@ -22,6 +22,10 @@
 // XXX: currently we only support ASCII
 #define NUM_REAL_CHARS 128
 
+// Numbering scheme for tags representing start and end of n'th subexpression:
+#define TAG_START(n) (2*(n))
+#define TAG_END(n) (2*(n)+1)
+
 namespace stapregex {
 
 typedef std::pair<char, char> segment;
