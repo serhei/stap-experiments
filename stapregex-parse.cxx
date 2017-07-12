@@ -283,8 +283,8 @@ regexp *
 regex_parser::parse (bool do_tag)
 {
   cur = cursor(&input, do_unescape);
-  num_subexpressions = 1; // subexpression 0 is guaranteed
   this->do_tag = do_tag;
+  num_subexpressions = do_tag ? 1 : 0; // group 0 is guaranteed when using tag
 
   regexp *result = parse_expr ();
 
@@ -409,8 +409,10 @@ regex_parser::parse_factor ()
     }
   else if (c == '(')
     {
-      // to number tags correctly, reserve a subexpression number here
-      unsigned curr_subexpression = num_subexpressions++;
+      // To number tags correctly, reserve a subexpression number here:
+      unsigned curr_subexpression = 0;
+      if (do_tag)
+        curr_subexpression = num_subexpressions++;
 
       result = parse_expr ();
 

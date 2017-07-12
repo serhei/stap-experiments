@@ -986,10 +986,13 @@ dfa::emit (translator_output *o) const
   o->newline(1);
 
   // Initialize tags:
-  o->newline() << "unsigned int i;";
-  o->newline() << "for (i = 0; i < " << ntags << "; i++)";
-  o->newline(1) << "YYFINAL(i) = -1;";
-  o->indent(-1);
+  if (ntags > 0)
+    {
+      o->newline() << "unsigned int i;";
+      o->newline() << "for (i = 0; i < " << ntags << "; i++)";
+      o->newline(1) << "YYFINAL(i) = -1;";
+      o->indent(-1);
+    }
 
   emit_action(o, initializer);
 

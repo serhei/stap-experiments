@@ -75,6 +75,10 @@ function matched:string(n:long)
 %}
 
 // TODOXXX: return # of matched subexpressions
+function ngroups:long()
+%{ /* pure */ /* unprivileged */ /* pragma:tagged_dfa */
+  STAP_RETVALUE = CONTEXT->last_match.num_final_tags / 2;
+%}
 
 // XXX: perhaps implement matched_start, matched_end to get indices?
 // XXX: some kind of find-replace functionality?

@@ -37,8 +37,8 @@ stapdfa *
 regex_to_stapdfa (systemtap_session *s, const string& input, const token *tok)
 {
   // Tags are disabled when not used, for the extra bit of efficiency.
-  bool do_tag = true; // <- TODOXXX temporarily force tag calculation
-  // bool do_tag = s->need_tagged_dfa;
+  // bool do_tag = true; // <- TODOXXX temporarily force tag calculation
+  bool do_tag = s->need_tagged_dfa;
 
   if (s->dfas.find(input) != s->dfas.end())
     return s->dfas[input];
