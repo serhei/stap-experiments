@@ -1,0 +1,84 @@
+#! stap -p5
+
+global n
+global pass, fail
+
+function print_groups() {
+  for (i = 0; i < ngroups(); i++) printf("'%s' ", matched(i))
+  printf("\n")
+}
+
+@define test(code, regexp, str) %(
+  passed = 1; match_fail = 0
+  result = (@str =~ @regexp)
+  if (result != !@code) { passed = 0; match_fail = 1 }
+%)
+
+@define check_equal(str1, str2) %(
+  // TODOXXX need to intercept 'group does not exist' error
+  if (@str1 != @str2) { passed = 0 }
+%)
+
+@define tally_result(code, regexp, str) %(
+  // TODOXXX: may also want to print *expected* group values
+  n++
+  if (passed) {
+    printf("regex PASS: #%d: %s %s %s with groups ", n, @regexp, (@code ? "!~" : "=~"), @str)
+	print_groups()
+    pass++
+  } else if (match_fail) {
+    printf("regex FAIL: #%d: %s %s %s\n", n, @regexp, (@code ? "!~" : "=~"), @str)
+    fail++
+  } else {
+    printf("regex FAIL (grouping): #%d: %s %s %s with groups ", n, @regexp, (@code ? "!~" : "=~"), @str)
+	print_groups()
+	fail++
+  }
+%)
+
+@define check(code, regex, str) %(
+  @test(@code, @regex, @str)
+  @tally_result(@code, @regex, @str)
+%)
+
+@define test0 (regex, str, grp0) %(
+  @test(0, @regex, @str)
+  @check_equal(matched(0), @grp0)
+%)
+
+@define check0 (regex, str, grp0) %(
+  @test0(@regex, @str, @grp0)
+  @tally_result(0, @regex, @str)
+%)
+
+@define test1 (regex, str, grp0, grp1) %(  
+  @test0(@regex, @str, @grp0)
+  @check_equal(matched(1), @grp1)
+%)
+
+@define check1 (regex, str, grp0, grp1) %(
+  @test1(@regex, @str, @grp0, @grp1)
+  @tally_result(0, @regex, @str)
+%)
+
+@define check2 (regex, str, grp0, grp1, grp2) %(  
+  @test1(@regex, @str, @grp0, @grp1)
+  @check_equal(matched(2), @grp2)
+  @tally_result(0, @regex, @str)
+%)
+
+probe begin {
+# basic tests / TODO: need to clarify POSIX behaviour
+  @check(0, "a*", "aaa")
+  @check(0, "(a*)a*a", "aaa")
+  @check1("re(gex)", "regex", "regex", "gex")
+
+# TODO: incorporate tests from regex.stp
+
+  exit()
+}
+
+probe end {
+  printf ("\nregex total PASS: %d, FAIL: %d\n", pass, fail)
+  if (fail > 0) error ("Oops")
+}
