@@ -72,6 +72,7 @@ probe begin {
   @check(0, "a*", "aaa")
   @check(0, "(a*)a*a", "aaa")
   @check1("re(gex)", "regex", "regex", "gex")
+  @check0("(long|longer)", "longer", "longer")
 
 # TODO: incorporate tests from regex.stp
 
