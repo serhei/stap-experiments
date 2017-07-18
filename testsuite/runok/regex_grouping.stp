@@ -5,7 +5,6 @@ global pass, fail
 
 function print_groups() {
   for (i = 0; i < ngroups(); i++) printf("'%s' ", matched(i))
-  printf("\n")
 }
 
 @define test(code, regexp, str) %(
@@ -14,26 +13,31 @@ function print_groups() {
   if (result != !@code) { passed = 0; match_fail = 1 }
 %)
 
-@define check_equal(str1, str2) %(
-  // TODOXXX need to intercept 'group does not exist' error
-  if (@str1 != @str2) { passed = 0 }
+@define check_equal(n, str1, str2) %(
+  // intercept 'group does not exist' error
+  if (@n >= ngroups()) { passed = 0 }
+  else if (@str1 != @str2) { passed = 0 }
 %)
 
 @define tally_result(code, regexp, str) %(
   // TODOXXX: may also want to print *expected* group values
   n++
   if (passed) {
-    printf("regex PASS: #%d: %s %s %s with groups ", n, @regexp, (@code ? "!~" : "=~"), @str)
-	print_groups()
+    printf("regex PASS: #%d: %s %s %s", n, @str, (@code ? "!~" : "=~"), @regexp)
+    if (@code == 0) {
+      printf(" with %d groups ", ngroups())
+      print_groups()
+    }
     pass++
   } else if (match_fail) {
-    printf("regex FAIL: #%d: %s %s %s\n", n, @regexp, (@code ? "!~" : "=~"), @str)
+    printf("regex FAIL: #%d: %s %s %s\n", n, @str, (@code ? "!~" : "=~"), @regexp)
     fail++
   } else {
-    printf("regex FAIL (grouping): #%d: %s %s %s with groups ", n, @regexp, (@code ? "!~" : "=~"), @str)
+    printf("regex FAIL (grouping): #%d: %s %s %s with %d groups ", n, @str, (@code ? "!~" : "=~"), @regexp, ngroups())
 	print_groups()
 	fail++
   }
+  printf("\n")
 %)
 
 @define check(code, regex, str) %(
@@ -43,7 +47,7 @@ function print_groups() {
 
 @define test0 (regex, str, grp0) %(
   @test(0, @regex, @str)
-  @check_equal(matched(0), @grp0)
+  @check_equal(0, matched(0), @grp0)
 %)
 
 @define check0 (regex, str, grp0) %(
@@ -53,7 +57,7 @@ function print_groups() {
 
 @define test1 (regex, str, grp0, grp1) %(  
   @test0(@regex, @str, @grp0)
-  @check_equal(matched(1), @grp1)
+  @check_equal(1, matched(1), @grp1)
 %)
 
 @define check1 (regex, str, grp0, grp1) %(
@@ -63,18 +67,25 @@ function print_groups() {
 
 @define check2 (regex, str, grp0, grp1, grp2) %(  
   @test1(@regex, @str, @grp0, @grp1)
-  @check_equal(matched(2), @grp2)
+  @check_equal(2, matched(2), @grp2)
   @tally_result(0, @regex, @str)
 %)
 
 probe begin {
 # basic tests / TODO: need to clarify POSIX behaviour
-  @check(0, "a*", "aaa")
-  @check(0, "(a*)a*a", "aaa")
+  @check0("a*", "aaa", "aaa")
+  @check1("(a*)a*a", "aaa", "aaa", "aa")
   @check1("re(gex)", "regex", "regex", "gex")
   @check0("(long|longer)", "longer", "longer")
+  @check(1, "regex", "unrelated")
 
-# TODO: incorporate tests from regex.stp
+# TODO: incorporate ALL tests from regex.stp
+# below are only the tests that have extra groups
+  @check1("(a+|b)*", "ab", "ab", "b")
+  @check1("(a+|b)+", "ab", "ab", "b")
+  @check1("([abc])*d", "abbbcd", "abbbcd", "c")
+  @check2("(bc+d$|ef*g.|h?i(j|k))", "ij", "ij", "ij", "j")
+# TODO: further tests...
 
   exit()
 }
