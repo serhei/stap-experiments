@@ -125,6 +125,7 @@ stapdfa::emit_declaration (translator_output *o) const
   o->newline() << "#define YYCTYPE char";
   o->newline() << "#define YYSTART start";
   o->newline() << "#define YYCURSOR cur";
+  o->newline() << "#define YYLENGTH (YYCURSOR-YYSTART)";
   o->newline() << "#define YYLIMIT cur";
   o->newline() << "#define YYMARKER mar";
   // XXX: YYFILL is disabled as it doesn't play well with ^
@@ -153,6 +154,7 @@ stapdfa::emit_declaration (translator_output *o) const
   o->newline() << "#undef YYCTYPE";
   o->newline() << "#undef YYSTART";
   o->newline() << "#undef YYCURSOR";
+  o->newline() << "#undef YYLENGTH";
   o->newline() << "#undef YYLIMIT";
   o->newline() << "#undef YYMARKER";
 

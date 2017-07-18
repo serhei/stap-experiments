@@ -53,11 +53,14 @@ function matched:string(n:long)
 
   start = CONTEXT->last_match.tag_vals[start_ix];
   end = CONTEXT->last_match.tag_vals[end_ix];
+  // _stp_printf ("**DEBUG** Extracted subexpression #%lld:(%d,%d) from %d to %d\n", STAP_ARG_n, start_ix, end_ix, start, end);
 
   if (start < 0 || end < 0) {
-    snprintf(CONTEXT->error_buffer, sizeof(CONTEXT->error_buffer),
-             "Unknown coordinates for subexpression %lld", STAP_ARG_n);
-    CONTEXT->last_error = CONTEXT->error_buffer;
+    // If indices are negative, the group was not matched. Return empty string:
+    start = end = 0;
+    // snprintf(CONTEXT->error_buffer, sizeof(CONTEXT->error_buffer),
+    //          "Unknown coordinates for subexpression %lld", STAP_ARG_n);
+    // CONTEXT->last_error = CONTEXT->error_buffer;
   }
 
   if (start > end) {

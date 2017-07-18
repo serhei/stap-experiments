@@ -142,7 +142,12 @@ struct dfa {
   tdfa_action initializer; // -- run before entering start state
   std::vector<std::string> outcome_snippets;
 
-  dfa (ins *i, int ntags, std::vector<std::string>& outcome_snippets);
+  // When using tagged DFAs, record indices of the success and failure outcome:
+  int success_outcome;
+  int fail_outcome;
+
+  dfa (ins *i, int ntags, std::vector<std::string>& outcome_snippets,
+       int accept_outcome = 1);
   ~dfa ();
 
   void emit (translator_output *o) const;

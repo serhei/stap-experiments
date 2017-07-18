@@ -729,13 +729,22 @@ dfa::compute_finalizer (state *s)
 
 /* The main DFA-construction algorithm: */
 
-dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets)
+dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets,
+          int accept_outcome)
   : orig_nfa(i), nstates(0), nmapitems(0), ntags(ntags),
-    outcome_snippets(outcome_snippets)
+    outcome_snippets(outcome_snippets), success_outcome(accept_outcome)
 {
 #ifdef STAPREGEX_DEBUG_TNFA
   cerr << "DFA CONSTRUCTION (ntags=" << ntags << "):" << endl;
 #endif
+
+  // XXX: Longest-match priority requires one success and one failure outcome:
+  if (ntags > 0)
+    {
+      assert(outcome_snippets.size() == 2);
+      assert(success_outcome == 1);
+      fail_outcome = 0;
+    }
 
   /* Initialize empty linked list of states: */
   first = last = NULL;
@@ -898,8 +907,9 @@ void
 span::emit_jump (translator_output *o, const dfa *d) const
 {
 #ifdef STAPREGEX_DEBUG_MATCH
-  o->newline () << "_stp_warn(\" --> @%ld GOTO yystate%d\\n\", "
-                << "(YYCURSOR-YYSTART), " << to->label << ");";
+  o->newline () << "_stp_printf(\" --> @%ld GOTO yystate%d\\n\", "
+                << "YYLENGTH, " << to->label << ");";
+  o->newline () << "_stp_print_flush();";
 #endif
 
   // TODOXXX tags feature should allow proper longest-match priority
@@ -919,20 +929,64 @@ span::emit_jump (translator_output *o, const dfa *d) const
 }
 
 /* Assuming the target DFA state of the span is a final state, emit code to
-   (TODOXXX) cleanup tags and exit with a final answer. */
+   cleanup tags and (if appropriate) exit with a final answer. */
 void
 span::emit_final (translator_output *o, const dfa *d) const
 {
   assert (to->accepts); // XXX: must guarantee correct usage of emit_final()
 
   // We record map_items *after* consuming YYCURSOR:
-  o->newline() << "YYCURSOR++;";
+  o->newline () << "YYCURSOR++;";
   d->emit_action(o, action);
-  // TODOXXX handle longest-match priority here!!
-  d->emit_action(o, to->finalizer);
 
-  o->newline() << d->outcome_snippets[to->accept_outcome];
-  o->newline() << "goto yyfinish;";
+  // TODOXXX: condition to->finalizer.empty() only appropriate for the two-outcome scheme with one outcome being a failure
+  if (d->ntags == 0 || to->finalizer.empty()) // terminate immediately
+    {
+      d->emit_action(o, to->finalizer);
+      if (d->ntags == 0)
+        {
+          o->newline() << d->outcome_snippets[to->accept_outcome];
+          o->newline() << "goto yyfinish;";
+        }
+      else
+        {
+          // Need to return the outcome associated with the longest match:
+          o->newline() << "if ( YYFINAL(0) >= 0 ) {";
+          o->newline(1) << d->outcome_snippets[d->success_outcome];
+          o->newline(-1) << "} else {";
+          o->newline(1) << d->outcome_snippets[d->fail_outcome];
+          o->newline(-1) << "}";
+          o->newline() << "goto yyfinish;";
+        }
+    }
+  else
+    {
+
+      // TODOXXX Temporary solution for ensuring longest-match priority:
+      map_item new_tag_0; bool found = false;
+      // TODOXXX: cerr << "**DEBUG** finding tag0 in " << to->finalizer << endl;
+      for (tdfa_action::iterator it = to->finalizer.begin();
+           it != to->finalizer.end(); it++)
+        // TODOXXX: Only works if finalizer contains all reordering commands (make that an explicitly checked condition?)
+        if (it->save_tag && it->from.first == 0)
+          {
+            new_tag_0 = it->from; // the map_item saved to tag 0
+            found = true;
+          }
+      assert(found);
+#define NEW_TAG_0 "YYTAG(" << new_tag_0.first << "," << new_tag_0.second << ")"
+      // if (new_tag_0 == old_tag_0 && new_length > old_length) emit action;
+      o->newline() << "if ( YYFINAL(0) < 0 || "
+                   << "(" << NEW_TAG_0 << " == YYFINAL(0)";
+      o->newline() << "    && (YYLENGTH - " << NEW_TAG_0 << ")"
+                   << " > (YYFINAL(1) - YYFINAL(0)))) {";
+      o->newline(1); d->emit_action(o, to->finalizer);
+      // o->newline() << d->outcome_snippets[to->accept_outcome];
+      // o->newline() << "goto yyfinish;";
+      o->newline(-1) << "}";
+
+      o->newline () << "goto yystate" << to->label << ";";
+    }
 }
 
 string c_char(char c)
@@ -949,8 +1003,9 @@ state::emit (translator_output *o, const dfa *d) const
 {
   o->newline() << "yystate" << label << ": ";
 #ifdef STAPREGEX_DEBUG_MATCH
-  o->newline () << "_stp_warn(\"@%ld READ '%s' %c\", "
-                << "(YYCURSOR-YYSTART), cur, *YYCURSOR);";
+  o->newline () << "_stp_printf(\"@%ld READ '%s' %c\", "
+                << "YYLENGTH, cur, *YYCURSOR);";
+  o->newline () << "_stp_print_flush();";
 #endif
   o->newline() << "switch (*YYCURSOR) {";
   o->indent(1);
@@ -1016,8 +1071,9 @@ void
 dfa::emit_action (translator_output *o, const tdfa_action &act) const
 {
 #ifdef STAPREGEX_DEBUG_MATCH
-  o->newline () << "_stp_warn(\" --> @%ld, SET_TAG %s\\n\", "
-                << "(YYCURSOR-YYSTART), \"" << act << "\");";
+  o->newline () << "_stp_printf(\" --> @%ld, SET_TAG %s\\n\", "
+                << "YYLENGTH, \"" << act << "\");";
+  o->newline () << "_stp_print_flush();";
 #endif
   for (tdfa_action::const_iterator it = act.begin(); it != act.end(); it++)
     {
@@ -1027,7 +1083,7 @@ dfa::emit_action (translator_output *o, const tdfa_action &act) const
         o->newline() << "YYTAG(" << it->to.first
                      << "," << it->to.second << ") = ";
       if (it->save_pos)
-        o->line() << "(YYCURSOR-YYSTART)";
+        o->line() << "YYLENGTH";
       else
         o->line() << "YYTAG(" << it->from.first
                   << "," << it->from.second << ")";
