@@ -977,13 +977,12 @@ span::emit_final (translator_output *o, const dfa *d) const
 #define NEW_TAG_0 "YYTAG(" << new_tag_0.first << "," << new_tag_0.second << ")"
       // if (new_tag_0 == old_tag_0 && new_length > old_length) emit action;
       o->newline() << "if ( YYFINAL(0) < 0 || "
-                   << "(" << NEW_TAG_0 << " == YYFINAL(0)";
-      o->newline() << "    && (YYLENGTH - " << NEW_TAG_0 << ")"
+                   << "(" << NEW_TAG_0 << " == YYFINAL(0) &&";
+      o->newline() << "    (YYLENGTH - " << NEW_TAG_0 << ")"
                    << " > (YYFINAL(1) - YYFINAL(0)))) {";
       o->newline(1); d->emit_action(o, to->finalizer);
-      // o->newline() << d->outcome_snippets[to->accept_outcome];
-      // o->newline() << "goto yyfinish;";
-      o->newline(-1) << "}";
+      o->indent(-1);
+      o->newline() << "}";
 
       o->newline () << "goto yystate" << to->label << ";";
     }
@@ -1051,10 +1050,12 @@ dfa::emit (translator_output *o) const
 
   emit_action(o, initializer);
 
-  // XXX: workaround for empty regex
   if (first->accepts)
     {
       emit_action(o, first->finalizer);
+    }
+  if (first->accepts && ntags == 0) // XXX workaround for empty regex
+    {
       o->newline() << outcome_snippets[first->accept_outcome];
       o->newline() << "goto yyfinish;";      
     }
