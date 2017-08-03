@@ -74,17 +74,45 @@ function print_groups() {
 probe begin {
 # basic tests / TODO: need to clarify POSIX behaviour
   @check0("a*", "aaa", "aaa")
+  @check1("(ab)*", "abab", "abab", "ab")
+  @check1("c(ab)*", "cabab", "cabab", "ab")
   @check1("(a*)a*a", "aaa", "aaa", "aa")
   @check1("re(gex)", "regex", "regex", "gex")
   @check0("(long|longer)", "longer", "longer")
   @check(1, "regex", "unrelated")
 
 # TODO: incorporate ALL tests from regex.stp
-# below are only the tests that have extra groups
+  /* from former systemtap.base/regexp.exp */
+  @check0("\\\\", "\\", "\\")
+  @check0("abc", "xabcy", "abc")
+  @check0("ab*bc", "abbbbc", "abbbbc")
+  @check0("ab?bc", "abbc", "abbc")
+  @check(1, "^abc$", "abcc")
+  @check(1, "a[b-d]e", "abd")
+  @check0("a[b-d]e", "ace", "ace")
+  @check0("a\\(*b", "ab", "ab")
+  @check0("a\\(*b", "a((b", "a((b")
   @check1("(a+|b)*", "ab", "ab", "b")
   @check1("(a+|b)+", "ab", "ab", "b")
   @check1("([abc])*d", "abbbcd", "abbbcd", "c")
+
+  @check(1, "^(ab|cd)e", "abcde")
+  @check1("(ab|cd)e", "abcde", "cde", "cd")  # variant..
+  @check1("(ab|cd)e$", "abcde", "cde", "cd") # variant..
+
+  @check0("[A-Za-z_][A-Za-z0-9_]*", "alpha", "alpha")
+
   @check2("(bc+d$|ef*g.|h?i(j|k))", "ij", "ij", "ij", "j")
+  @check(1, "(bc+d$|ef*g.|h?i(j|k))", "effg")
+  @check2("(bc+d$|ef*g.|h?i(j|k))", "00effg12", "effg1", "effg1", "")
+  @check2("(bc+d$|ef*g.|h?i(j|k))", "bcccd", "bcccd", "bcccd", "") # variant..
+
+  @check(0, "(((((((((a)))))))))", "a") # TODO: check all the groups?
+  @check(1, "\\((.*),", "(.*)\\)")
+  @check(1, "[k]", "ab")
+  @check0("abcd", "abcd", "abcd")
+  @check1("a(bc)d", "abcd", "abcd", "bc")
+
 # TODO: further tests...
 
   exit()
