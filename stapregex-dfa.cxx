@@ -370,7 +370,7 @@ te_closure (dfa *dfa, state_kernel *start, int ntags, bool is_initial = false)
           // NB: it is an iterator into closure_map[next.i],
           // while *it is an iterator into closure
 
-          int result = arc_compare((*it)->priority, next.priority);
+          int result = arc_compare(next.priority, (*it)->priority);
           if (result == 0)
             {
               ins *base = dfa->orig_nfa;
@@ -394,7 +394,7 @@ te_closure (dfa *dfa, state_kernel *start, int ntags, bool is_initial = false)
 #endif
             assert (result != 0); // TODOXXX expected to fail? however, the proper semantics for this case are not yet clear to me
 
-          if (result > 0) {
+          if (result > 0) { // i.e. next.priority > (*it)->priority
             // next.priority is higher, delete existing element
             closure->erase(*it);
 
@@ -403,7 +403,7 @@ te_closure (dfa *dfa, state_kernel *start, int ntags, bool is_initial = false)
             it++;
             closure_map[next.i].erase(old_it);
             continue;
-          } else { // result < 0
+          } else { // result <= 0
             // next.priority is lower, skip adding next
             already_found = true;
           }
