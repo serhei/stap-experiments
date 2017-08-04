@@ -235,6 +235,12 @@ te_closure (dfa *dfa, state_kernel *start, int ntags, bool is_initial = false)
   for (state_kernel::iterator it = closure->begin();
        it != closure->end(); it++)
     {
+#if 0
+      cerr << "**DEBUG** initial closure point ";
+      it->print(cerr, dfa->orig_nfa);
+      cerr << endl;
+#endif
+
       // TODOXXX Retaining the priority from the previous state has
       // the potential to overflow the arc_priority representation if
       // there is too much branching. Needs careful testing and perhaps
@@ -374,17 +380,18 @@ te_closure (dfa *dfa, state_kernel *start, int ntags, bool is_initial = false)
           if (result == 0)
             {
               ins *base = dfa->orig_nfa;
-              cerr << "**DEBUG** identical arc_priorities for ";
+              cerr << "stapregex **UNEXPECTED** -- identical arc_priorities for ";
               (*it)->print(cerr, base);
               cerr << " and ";
               next.print(cerr, base);
               cerr << endl;
             }
 #if 0
+          // XXX This is an experimental solution which did not work correctly.
           if (result == 0 && (*it)->i == next.i)
             {
-              // TODOXXX DOUBLECHECK Reached the same kernel_point via two
-              // alternate paths.  Merge map_items from next into *it:
+              // Reached the same kernel_point via two alternate
+              // (equal priority) paths. Merge map_items from next into *it:
               cerr << "**DEBUG** (merging paths for same ins)" << endl;
               for (list<map_item>::iterator jt = next.map_items.begin();
                    jt != next.map_items.end(); jt++)
@@ -392,9 +399,18 @@ te_closure (dfa *dfa, state_kernel *start, int ntags, bool is_initial = false)
             }
           else
 #endif
-            assert (result != 0); // TODOXXX expected to fail? however, the proper semantics for this case are not yet clear to me
+              assert (result != 0); // Expect this to fail.
 
           if (result > 0) { // i.e. next.priority > (*it)->priority
+#if 0
+            ins *base = dfa->orig_nfa;
+            cerr << "**DEBUG** erasing ";
+            (*it)->print(cerr, base);
+            cerr << " in favour of ";
+            next.print(cerr, base);
+            cerr << endl;
+#endif
+
             // next.priority is higher, delete existing element
             closure->erase(*it);
 
@@ -412,6 +428,12 @@ te_closure (dfa *dfa, state_kernel *start, int ntags, bool is_initial = false)
         }
 
       if (!already_found) {
+#if 0
+        cerr << "**DEBUG** added to closure: ";
+        next.print(cerr, dfa->orig_nfa);
+        cerr << endl;
+#endif
+
         // Store the element in closure:
         closure->push_back(next);
         worklist.push(next);
@@ -793,8 +815,13 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets,
           else if (it->i->i.tag == ACCEPT)
             {
               /* In case of multiple accepting NFA states,
-                 prefer the highest numbered outcome: */
-              if (!curr->accepts || it->i->i.param > curr->accept_outcome)
+                 prefer the highest numbered outcome.
+
+                 XXX: A possible refinement (commented-out).
+                 In case of NFA states with identical outcomes
+                 pick the one with the highest arc_priority. */
+              if (!curr->accepts || it->i->i.param > curr->accept_outcome
+                  /* || arc_compare(it->priority, curr->accept_kp->priority) > 0 */)
                 {
                   curr->accept_kp = &*it;
                   curr->accept_outcome = it->i->i.param;
@@ -961,13 +988,12 @@ span::emit_final (translator_output *o, const dfa *d) const
     }
   else
     {
-
-      // TODOXXX Temporary solution for ensuring longest-match priority:
+      // Ensure longest-match priority by comparing length + start coord:
       map_item new_tag_0; bool found = false;
-      // TODOXXX: cerr << "**DEBUG** finding tag0 in " << to->finalizer << endl;
       for (tdfa_action::iterator it = to->finalizer.begin();
            it != to->finalizer.end(); it++)
-        // TODOXXX: Only works if finalizer contains all reordering commands (make that an explicitly checked condition?)
+        // TODOXXX: Only works if finalizer only contains reordering commands
+        // (perhaps make that into an explicitly checked condition?)
         if (it->save_tag && it->from.first == 0)
           {
             new_tag_0 = it->from; // the map_item saved to tag 0
