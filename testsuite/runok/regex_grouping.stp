@@ -72,14 +72,29 @@ function print_groups() {
 %)
 
 probe begin {
-# basic tests / TODO: need to clarify POSIX behaviour
+# tests for longest-match behaviour / TODO: need to clarify POSIX/PCRE rules
+# TODOXXX: check against different regex implementations
   @check0("a*", "aaa", "aaa")
+  @check0("a?", "aaa", "a")
   @check1("(ab)*", "abab", "abab", "ab")
+  @check1("(ab)?", "ab", "ab", "ab")
+  @check1("(ab)?", "abab", "ab", "ab")
   @check1("c(ab)*", "cabab", "cabab", "ab")
+  @check1("c(ab)?", "cab", "cab", "ab")
+  @check1("c(ab)?", "cabab", "cab", "ab")
   @check1("(a*)a*a", "aaa", "aaa", "aa")
   @check1("re(gex)", "regex", "regex", "gex")
   @check0("(long|longer)", "longer", "longer")
   @check(1, "regex", "unrelated")
+  @check0("a|b", "ab", "a")
+  @check0("a+|b", "baaab", "b")
+  @check0("a*|b", "aaab", "aaa")
+
+# TODO: is this right? i.e. does 'first alternative' trump 'longest-match'?
+# note that Open Group standard seems to just say to use the longest match out of the ones starting at the earliest point
+  @check0("a*|b", "baaab", "")
+  @check0("b|a*", "baaab", "b")
+  @check1("(.*).*", "abcdef", "abcdef", "abcdef")
 
 # TODO: incorporate ALL tests from regex.stp
   /* from former systemtap.base/regexp.exp */
