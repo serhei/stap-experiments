@@ -146,9 +146,9 @@ arc_compare (const arc_priority& a, const arc_priority& b)
   unsigned long y = b.first;
 
   if (a.second > b.second)
-    x = x << (a.second - b.second);
+    y = y << (a.second - b.second);
   else if (a.second < b.second)
-    y = y << (b.second - a.second);
+    x = x << (b.second - a.second);
 
   // Special case: 0/n </> 0/m iff m </> n.
   // This is because such priorities are obtained by refine_lower().
