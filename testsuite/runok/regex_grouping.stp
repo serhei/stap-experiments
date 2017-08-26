@@ -96,8 +96,7 @@ probe begin {
   @check0("b|a*", "baaab", "b")
   @check1("(.*).*", "abcdef", "abcdef", "abcdef")
 
-# TODO: incorporate ALL tests from regex.stp
-  /* from former systemtap.base/regexp.exp */
+# a subset of the tests from regex.stp
   @check0("\\\\", "\\", "\\")
   @check0("abc", "xabcy", "abc")
   @check0("ab*bc", "abbbbc", "abbbbc")
@@ -127,6 +126,24 @@ probe begin {
   @check(1, "[k]", "ab")
   @check0("abcd", "abcd", "abcd")
   @check1("a(bc)d", "abcd", "abcd", "bc")
+
+# selected tests from glibc's grouping testsuite (subfolder posix/bug-regex*.c)
+  @check0("ab[cde]", "xyabez", "abe")
+  @check(0, "^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\\?([^#]*))?(#(.*))?", "http://www.regex.com/pattern/matching.html#intro") # TODO: check 9 groups
+  @check(0, "^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\\?([^#]*))?(#(.*))?", "http://www.regex.com/pattern/matching.html?query#intro") # TODO: check 9 groups
+  @check(1, "xy$", "xyz")
+  # TODO -- @check("xy\\>", "xy  ")
+  # TODO -- @check("xy \\<", "xy z")
+  @check1("^#! */.*/(k|ba||pdk|z)sh", "#! /bin/sh", "#! /bin/sh", "")
+  @check0("[abc]*d", "foacabdxy", "acabd")
+  @check1("a(.*)b", "a b", "a b", " ")
+  @check1("(^|foo)bar", "bar", "bar", "")
+  @check1("(foo|^)bar", "bar", "bar", "")
+  @check(1, "(foo|^)bar", "bazbar") # variant..
+  @check1("(foo|^)bar", "bazfoobar", "foobar", "foo") # variant..
+  @check(1, "a^b", "a^b")
+  @check0("a t.st", "This is a test.", "a test")
+  # TODO -- @check("^6?3?[25]?5?[14]*[25]*[69]*+[58]*87?4?$", ??)
 
 # TODO: further tests...
 
