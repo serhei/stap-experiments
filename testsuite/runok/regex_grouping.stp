@@ -90,9 +90,9 @@ probe begin {
   @check0("a+|b", "baaab", "b")
   @check0("a*|b", "aaab", "aaa")
 
-# TODO: is this right? i.e. does 'first alternative' trump 'longest-match'?
-# note that Open Group standard seems to just say to use the longest match out of the ones starting at the earliest point
-  @check0("a*|b", "baaab", "")
+  # XXX: different engines show subtle differences in behaviour
+  #@check0("a*|b", "baaab", "") # <- PCRE behaviour
+  @check0("a*|b", "baaab", "b") # <- glibc behaviour
   @check0("b|a*", "baaab", "b")
   @check1("(.*).*", "abcdef", "abcdef", "abcdef")
 
@@ -144,6 +144,38 @@ probe begin {
   @check(1, "a^b", "a^b")
   @check0("a t.st", "This is a test.", "a test")
   # TODO -- @check("^6?3?[25]?5?[14]*[25]*[69]*+[58]*87?4?$", ??)
+
+# glibc posix/bug-regex13.c
+  @check0("ab{0}c", "ac", "ac")
+  @check(1, "ab{0}c", "abc")
+  @check(1, "ab{0}c", "abbc")
+  @check(1, "ab{1}{1}c", "ac")
+  @check0("ab{1}{1}c", "abc", "abc")
+  @check(1, "ab{1}{1}c", "abbc")
+  @check(1, "ab{2}{2}c", "ac")
+  @check(1, "ab{2}{2}c", "abbc")
+  @check0("ab{2}{2}c", "abbbbc", "abbbbc")
+  @check(1, "ab{2}{2}c", "abbbbbc")
+  @check0("ab{0}{1}c", "ac", "ac")
+  @check(1, "ab{0}{1}c", "abc")
+  @check(1, "ab{0}{1}c", "abbc")
+  @check0("ab{1}{0}c", "ac", "ac")
+  @check(1, "ab{1}{0}c", "abc")
+  @check(1, "ab{1}{0}c", "abbc")
+  @check0("ab{0}*c", "ac", "ac")
+  @check(1, "ab{0}*c", "abc")
+  @check(1, "ab{0}*c", "abbc")
+  @check0("ab{0}?c", "ac", "ac")
+  @check(1, "ab{0}?c", "abc")
+  @check(1, "ab{0}?c", "abbc")
+  @check0("ab{0}+c", "ac", "ac")
+  @check(1, "ab{0}+c", "abc")
+  @check(1, "ab{0}+c", "abbc")
+
+# glibc posix/bug-regex20.c - just one case for sanitycheck
+  @check0("foo", "b\xc3\xa4rfoob\xc3\xa4z", "foo") # -> fails to match 'foo'
+  #@check0("\xa4rfoo", "b\xc3\xa4rfoob\xc3\xa4z", "foo") # -> SEGFAULT
+  # XXX: in general, multibyte support is still in the future...
 
 # TODO: further tests...
 
