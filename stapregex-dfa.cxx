@@ -31,10 +31,9 @@
 
 // Uncomment to show result of ins (NFA) compilation:
 //#define STAPREGEX_DEBUG_INS
-// Uncomment to display result of DFA compilation in a compact format:
+// Uncomment to emit DFA in a non-working compact format (use with -p3):
 //#define STAPREGEX_DEBUG_DFA
-// Uncomment to have the generated engine do a trace of visited states
-// (only when testing using the standalone regtest module):
+// Uncomment to have the generated engine do a trace of visited states:
 //#define STAPREGEX_DEBUG_MATCH
 
 // Uncomment for a detailed walkthrough of the tagged-NFA conversion:
@@ -135,10 +134,6 @@ stapregex_compile (regexp *re, const std::string& match_snippet,
    Application to Regular Expressions"
    (http://laurikari.net/ville/spire2000-tnfa.pdf).
 
-   TODOXXX: The following does not contain a fully working
-   implementation of the tagging support, but only of the regex
-   matching.
-
    HERE BE DRAGONS (and not the friendly kind) */
 
 /* Functions to deal with relative transition priorities: */
@@ -185,8 +180,8 @@ state::state (dfa *owner, state_kernel *kernel)
 void
 dfa::add_map_item (const map_item &m)
 {
-  // TODOXXX: later, compute a mapping into a single-level tag_states array:
-  // TODOXXX: can drop the +1 and instead subtract 1 in YYTAG
+  // TODOXXX: later, compute a mapping into a single-level tag_states array
+  // TODOXXX: could drop the +1 and instead subtract 1 in YYTAG macro
   nmapitems = max(nmapitems, m.second) + 1;
 }
 
@@ -259,12 +254,13 @@ te_closure (dfa *dfa, state_kernel *start, int ntags, bool is_initial = false)
       cerr << endl;
 #endif
 
-      // TODOXXX Retaining the priority from the previous state has
-      // the potential to overflow the arc_priority representation if
-      // there is too much branching. Needs careful testing and perhaps
-      // a step to rebalance the priorities in the initial kernel.
-      // TODOXXX it->priority = make_pair(0,0); // -- does not quite work
-      worklist.push(*it);
+      // XXX: Retaining the priority from the previous state has the
+      // potential to overflow the arc_priority representation if
+      // there is too much branching. This should cause an explicit
+      // assertion failure if it occurs in practice (see refine_*()),
+      // and might be fixable by adding an explicit step to rebalance
+      // priorities in the kernel.
+      worklist.push(*it); // -- push with existing priority
 
       // Store the element in relevant caches:
 
@@ -635,7 +631,7 @@ dfa::find_equivalent (state *s, tdfa_action &action)
                   if (cycle_seen.count(shift_map[m]) != 0)
                     goto next_state; // -- found cycle
                   cycle_seen.insert(m);
-                  m = shift_map[m]; // TODOXXX: paranoid about overwriting m - DOUBLE CHECK
+                  m = shift_map[m];
                 }
 
               // If we reach the end of the chain, or find a map item
@@ -865,13 +861,12 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets,
 
           s.lb = c;
 
-          // TODOXXX: what if list<ins *> is the same but map_items are not?
           while (++c < NUM_REAL_CHARS && same_ins(edge_end[c], ee)) ;
 
           s.ub = c - 1;
 
-          s.reach_pairs = new state_kernel; // TODOXXX dealloc?
-          s.jump_pairs = new state_kernel; // TODOXXX dealloc?
+          s.reach_pairs = new state_kernel;
+          s.jump_pairs = new state_kernel;
 
           for (list<kernel_point>::iterator it = eb.begin();
                it != eb.end(); it++)
@@ -896,8 +891,7 @@ dfa::dfa (ins *i, int ntags, vector<string>& outcome_snippets,
           state *target = new state(this, u_pairs);
 
           /* Generate position-save commands for any map items
-             that do not appear in TODOXXX the precursor to the edge: */
-          // TODOXXX tdfa_action c = compute_action(curr->kernel, u_pairs);
+             that do not appear in the edge: */
           tdfa_action c = compute_action(it->jump_pairs, u_pairs);
 
           /* If there is a state t_prime in states such that some
@@ -957,10 +951,6 @@ span::emit_jump (translator_output *o, const dfa *d) const
   o->newline () << "_stp_print_flush();";
 #endif
 
-  // TODOXXX tags feature should allow proper longest-match priority
-  // TODOXXX if (match_length > max_length) { final_match = curr_match; }
-  // TODOXXX continue matching;
-
   if (to->accepts)
     {
       emit_final(o, d);
@@ -984,7 +974,9 @@ span::emit_final (translator_output *o, const dfa *d) const
   o->newline () << "YYCURSOR++;";
   d->emit_action(o, action);
 
-  // TODOXXX: condition to->finalizer.empty() only appropriate for the two-outcome scheme with one outcome being a failure
+  // XXX: Note that condition to->finalizer.empty() is only
+  // appropriate for the two-outcome scheme with one outcome being a
+  // failure.
   if (d->ntags == 0 || to->finalizer.empty()) // terminate immediately
     {
       d->emit_action(o, to->finalizer);
@@ -1075,8 +1067,8 @@ state::emit (translator_output *o, const dfa *d) const
       }
       it->emit_jump(o, d);
 
-      // TODOXXX 'default' option should handle the largest span...
-      // TODOXXX optimize by accepting before end of string whenever possible... (also necessary for proper first-matched-substring selection)
+      // TODOXXX 'default' option should handle the largest span
+      // TODOXXX optimize by accepting before end of string whenever possible
     }
   if (default_span)
     {
@@ -1153,7 +1145,8 @@ void
 dfa::emit_tagsave (translator_output *o, std::string,
                    std::string, std::string num_final_tags) const
 {
-  // TODOXXX ignoring other two snippets (tag_states and tag_vals)
+  // TODOXXX: ignoring other two snippets (tag_states and tag_vals),
+  // which are handled by the earlier code in the actual matcher.
   o->newline() << num_final_tags << " = " << ntags << ";";
 }
 

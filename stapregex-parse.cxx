@@ -570,7 +570,7 @@ regex_parser::parse_char_range ()
   for (;;)
     {
       // break on string end whenever we encounter it
-      if (cur.finished) parse_error(_("unclosed character class")); // TODOXXX doublecheck that this is triggered correctly
+      if (cur.finished) parse_error(_("unclosed character class"));
 
       range *add = stapregex_getrange (cur);
       range *new_ran = ( ran != NULL ? range_union(ran, add) : add );

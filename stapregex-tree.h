@@ -30,7 +30,7 @@ namespace stapregex {
 typedef std::pair<rchar, rchar> segment;
 
 struct range {
-  std::deque<segment> segments;   // -- [lb, ub], sorted ascending // TODOXXX
+  std::deque<segment> segments;   // -- [lb, ub], XXX sorted ascending
 
   range () {}                     // -- empty range
   range (rchar lb, rchar ub);     // -- a segment [lb, ub]

@@ -72,7 +72,7 @@ std::ostream& operator << (std::ostream &o, const tdfa_action& a);
    insns), at which point things start to get funky. Be sure to keep
    an eye on whether this turns out to be enough in practice.
 
-   TODOXXX: May want to check how this plays out in 32-bit architectures. */
+   TODOXXX: May want to test how this plays out in 32-bit architectures. */
 typedef std::pair<unsigned long long, unsigned> arc_priority;
 arc_priority refine_higher(const arc_priority& a);
 arc_priority refine_lower(const arc_priority& a);
