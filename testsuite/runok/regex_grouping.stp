@@ -174,7 +174,7 @@ probe begin {
 
 # glibc posix/bug-regex20.c - just one case for sanitycheck
   @check0("foo", "b\xc3\xa4rfoob\xc3\xa4z", "foo") # -> fails to match 'foo'
-  #@check0("\xa4rfoo", "b\xc3\xa4rfoob\xc3\xa4z", "foo") # -> SEGFAULT
+  #@check(2, "\xa4rfoo", "b\xc3\xa4rfoob\xc3\xa4z") # variant..
   # XXX: in general, multibyte support is still in the future...
 
 # TODO: further tests...

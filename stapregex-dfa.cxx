@@ -1014,7 +1014,7 @@ span::emit_final (translator_output *o, const dfa *d) const
     }
 }
 
-string c_char(char c)
+string c_char(rchar c)
 {
   stringstream o;
   o << "'";
@@ -1034,6 +1034,7 @@ state::emit (translator_output *o, const dfa *d) const
 #endif
   o->newline() << "switch (*YYCURSOR) {";
   o->indent(1);
+  const span *default_span = NULL;
   for (list<span>::const_iterator it = spans.begin();
        it != spans.end(); it++)
     {
@@ -1045,13 +1046,25 @@ state::emit (translator_output *o, const dfa *d) const
         }
 
       // Emit labels to handle all the other elements of the span:
-      for (unsigned c = max('\1', it->lb); c <= (unsigned) it->ub; c++) {
-        o->newline() << "case " << c_char((char) c) << ":";
+      for (unsigned c = max((rchar) '\1', it->lb);
+           c <= (unsigned) it->ub; c++) {
+        if (c > 127)
+          {
+            default_span = &(*it);
+            continue; // XXX: not an ASCII char, needs special handling
+          }
+        o->newline() << "case " << c_char((rchar) c) << ":";
       }
       it->emit_jump(o, d);
 
-      // TODOXXX handle a 'default' set of characters for the largest span...
+      // TODOXXX 'default' option should handle the largest span...
       // TODOXXX optimize by accepting before end of string whenever possible... (also necessary for proper first-matched-substring selection)
+    }
+  if (default_span)
+    {
+      // Handle a non-ASCII (unknown) char:
+      o->newline() << "default:";
+      default_span->emit_jump(o, d);
     }
   o->newline(-1) << "}";
 }
