@@ -176,9 +176,14 @@ probe begin {
   @check0("foo", "b\xc3\xa4rfoob\xc3\xa4z", "foo")
   #@check(2, "\xa4rfoo", "b\xc3\xa4rfoob\xc3\xa4z") # variant..
   @check0("b.*foo", "b\xc3\xa4rfoob\xc3\xa4z", "b\xc3\xa4rfoo")
+  #@check0("b.", "b\xc3\xa4rfoob\xc3\xa4z", "b\xc3\xa4") # -> doesn't work yet
   # XXX: . can match non-ASCII chars, but in general proper multibyte/UTF support is still in the future...
 
-# TODO: further tests...
+# extra check -- what happens if the same regex is used twice?
+  @check0("foo", "barfoom", "foo")
+  @check(1, "foo", "barsoom")
+
+# TODO: further tests here...
 
   exit()
 }
