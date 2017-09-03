@@ -250,8 +250,10 @@ regexp::compile()
   unsigned k = ins_size();
 
   ins *i = new ins[k + 1];
+  // XXX Keep Valgrind from complaining in ins_optimize():
+  for (unsigned ix = 0; ix <= k; ix++) i[ix].i.marked = 0;
   compile(i);
-  
+
   // Append an infinite-loop GOTO to avoid edges going outside the array:
   i[k].i.tag = GOTO;
   i[k].i.link = &i[k];
